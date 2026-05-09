@@ -124,7 +124,7 @@ api_perf/
 pip install -r requirements.txt
 
 # 安装 evalscope（性能测试）
-pip install evalscope
+pip install evalscope[perf]
 
 # 安装前端依赖
 cd frontend

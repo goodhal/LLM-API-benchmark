@@ -2,7 +2,10 @@
   <div class="login-container">
     <el-card class="login-card">
       <template #header>
-        <h2>模型质量测试管理后台</h2>
+        <div class="logo-container">
+          <img src="@/views/logo.png" alt="Logo" class="logo">
+        </div>
+        <h2>模型质量测试平台V1.0</h2>
       </template>
       
       <el-form :model="loginForm" :rules="rules" ref="loginFormRef">
@@ -93,16 +96,47 @@ const handleLogin = async () => {
   justify-content: center;
   align-items: center;
   min-height: 100vh;
-  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  background: linear-gradient(135deg, #e8eef5 0%, #c5d0e6 100%);
 }
 
 .login-card {
-  width: 400px;
+  width: 450px;
+  border-radius: 20px;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.1);
+  padding: 30px;
+}
+
+.logo-container {
+  text-align: center;
+  margin-bottom: 15px;
+}
+
+.logo {
+  width: 280px;
+  height: 120px;
+  object-fit: contain;
 }
 
 .login-card h2 {
   text-align: center;
-  color: #303133;
-  margin: 0;
+  color: #000000;
+  margin: 0 0 25px 0;
+  font-size: 24px;
+  font-weight: bold;
+}
+
+.el-form-item {
+  margin-bottom: 20px;
+}
+
+.el-input__wrapper {
+  border-radius: 12px;
+}
+
+.el-button--primary {
+  border-radius: 12px;
+  height: 48px;
+  font-size: 16px;
+  font-weight: bold;
 }
 </style>

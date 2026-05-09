@@ -1,47 +1,44 @@
 <template>
   <el-container class="layout-container">
-    <el-aside width="200px">
+    <el-aside width="220px">
       <div class="logo">
-        <h3>测试管理后台</h3>
+        <img src="@/views/logo.png" alt="Logo" class="logo-img">
+        <div class="logo-text">
+          <h3>模型质量测试平台V1.0</h3>
+        </div>
       </div>
       <el-menu
         :default-active="activeMenu"
         router
-        background-color="#304156"
-        text-color="#bfcbd9"
+        background-color="#ffffff"
+        text-color="#606266"
         active-text-color="#409EFF"
+        border="false"
       >
         <el-menu-item index="/">
-          <el-icon><DataBoard /></el-icon>
-          <span>仪表盘</span>
+          <span>首页</span>
         </el-menu-item>
-        
         <el-menu-item index="/tasks">
-          <el-icon><List /></el-icon>
           <span>任务管理</span>
         </el-menu-item>
-        
-        <el-menu-item index="/perf-results">
-          <el-icon><TrendCharts /></el-icon>
-          <span>压力测试结果</span>
-        </el-menu-item>
-        
-        <el-menu-item index="/quality-results">
-          <el-icon><Document /></el-icon>
-          <span>质量测试结果</span>
-        </el-menu-item>
+        <el-sub-menu index="test-report">
+          <template #title>
+            <span>测试报告</span>
+          </template>
+          <el-menu-item index="/perf-results">压力测试</el-menu-item>
+          <el-menu-item index="/quality-results">质量测试</el-menu-item>
+        </el-sub-menu>
       </el-menu>
     </el-aside>
-    
+
     <el-container>
       <el-header>
-        <div class="header-content">
-          <h3>{{ pageTitle }}</h3>
+        <div class="header-left">
+        </div>
+        <div class="header-right">
           <el-dropdown @command="handleCommand">
-            <span class="el-dropdown-link">
-              <el-icon><User /></el-icon>
-              {{ username }}
-              <el-icon class="el-icon--right"><ArrowDown /></el-icon>
+            <span class="user-info">
+              <span>{{ username }}</span>
             </span>
             <template #dropdown>
               <el-dropdown-menu>
@@ -51,7 +48,7 @@
           </el-dropdown>
         </div>
       </el-header>
-      
+
       <el-main>
         <router-view />
       </el-main>
@@ -64,22 +61,35 @@ import { ref, computed } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { authAPI } from '@/utils/api'
+import {
+  TrendCharts, Document, List
+} from '@element-plus/icons-vue'
+
 
 const router = useRouter()
 const route = useRoute()
-const username = ref(localStorage.getItem('username') || 'admin')
+const username = ref(localStorage.getItem('username') || 'huangxuan')
+const searchText = ref('')
 
-const activeMenu = computed(() => route.path)
+const activeMenu = computed(() => {
+  const path = route.path
+  if (path === '/tasks') return 'api-test'
+  if (path === '/perf-results') return 'perf-test'
+  return path
+})
 
 const pageTitle = computed(() => {
   const titles = {
-    '/': '仪表盘',
+    '/': '首页',
     '/tasks': '任务管理',
-    '/perf-results': '压力测试结果',
-    '/quality-results': '质量测试结果'
+    '/perf-results': '场景管理',
+    '/quality-results': '测试报告'
   }
-  return titles[route.path] || '模型质量测试管理后台'
+  return titles[route.path] || '模型质量测试平台'
 })
+
+const toggleMenu = () => {
+}
 
 const handleCommand = async (command) => {
   if (command === 'logout') {
@@ -89,7 +99,7 @@ const handleCommand = async (command) => {
         cancelButtonText: '取消',
         type: 'warning'
       })
-      
+
       await authAPI.logout()
       localStorage.removeItem('token')
       ElMessage.success('已退出登录')
@@ -109,54 +119,114 @@ const handleCommand = async (command) => {
 }
 
 .el-aside {
-  background-color: #304156;
-  color: #fff;
+  background-color: #ffffff;
+  color: #606266;
+  border-right: 1px solid #e4e7ed;
 }
 
 .logo {
-  height: 60px;
+  height: 140px;
   display: flex;
+  flex-direction: column;
   align-items: center;
   justify-content: center;
-  background-color: #263445;
+  padding: 10px 5px;
+  border-bottom: 1px solid #e4e7ed;
 }
 
-.logo h3 {
-  color: #fff;
+.logo-img {
+  width: 144px;
+  height: 72px;
+  border-radius: 8px;
+  margin-bottom: 8px;
+  object-fit: contain;
+}
+
+.logo-text {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+.logo-text h3 {
+  color: #303133;
   margin: 0;
   font-size: 16px;
+  font-weight: 600;
+}
+
+.el-menu {
+  border-right: none;
+}
+
+.el-menu-item,
+.el-sub-menu__title {
+  height: 44px;
+  line-height: 44px;
+}
+
+.el-menu-item.is-active {
+  background-color: #ecf5ff !important;
+  color: #409EFF;
+}
+
+.el-sub-menu .el-menu-item {
+  padding-left: 52px !important;
 }
 
 .el-header {
-  background-color: #fff;
+  background-color: #ffffff;
   box-shadow: 0 1px 4px rgba(0, 21, 41, 0.08);
   display: flex;
+  justify-content: space-between;
   align-items: center;
   padding: 0 20px;
 }
 
-.header-content {
-  width: 100%;
+.header-left {
   display: flex;
-  justify-content: space-between;
   align-items: center;
 }
 
-.header-content h3 {
-  margin: 0;
-  color: #303133;
-  font-size: 18px;
-}
-
-.el-dropdown-link {
+.menu-toggle {
+  font-size: 20px;
+  margin-right: 16px;
   cursor: pointer;
-  display: flex;
-  align-items: center;
   color: #606266;
 }
 
+.search-input {
+  width: 300px;
+}
+
+.header-right {
+  display: flex;
+  align-items: center;
+}
+
+.header-btn {
+  margin-right: 12px;
+  font-size: 18px;
+  color: #606266;
+}
+
+.user-info {
+  display: flex;
+  align-items: center;
+  cursor: pointer;
+  padding: 8px 12px;
+  border-radius: 20px;
+  background-color: #ecf5ff;
+  color: #409EFF;
+}
+
+.user-icon {
+  margin-right: 8px;
+  font-size: 20px;
+}
+
 .el-main {
-  background-color: #f5f5f5;
+  background-color: #f5f7fa;
   padding: 20px;
 }
 </style>
