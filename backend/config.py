@@ -43,6 +43,10 @@ class Config:
     TASK_TIMEOUT = 3600  # 任务超时时间（秒）
     MAX_CONCURRENT_TASKS = 5  # 最大并发任务数
     
+    # ModelScope 路径
+    MODELSCOPE_CREDENTIALS_PATH = os.environ.get('MODELSCOPE_CREDENTIALS_PATH') or 'data/modelscope/credentials'
+    MODELSCOPE_CACHE = os.environ.get('MODELSCOPE_CACHE') or 'data/modelscope_cache'
+
     # 模拟模式（用于测试，不执行真实命令）
     USE_MOCK_EVALSCOPE = os.environ.get('USE_MOCK_EVALSCOPE', 'false').lower() == 'true'
     
@@ -59,8 +63,7 @@ class Config:
 
 class DevelopmentConfig(Config):
     """开发环境配置"""
-    DEBUG = True
-    SQLALCHEMY_ECHO = False  # 关闭 SQL 日志，避免日志过多
+    DEBUG = os.environ.get('FLASK_DEBUG', '0') == '1'
 
 
 class ProductionConfig(Config):

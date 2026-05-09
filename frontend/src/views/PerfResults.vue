@@ -180,9 +180,11 @@
           </template>
         </el-table-column>
         
-        <el-table-column label="操作" width="120">
+        <el-table-column label="操作" width="260" fixed="right">
           <template #default="{ row }">
+            <el-button size="small" type="primary" @click="viewReport(row)">查看报告</el-button>
             <el-button size="small" @click="viewFile(row)">查看日志</el-button>
+            <el-button size="small" type="danger" @click="deleteResult(row)">删除</el-button>
           </template>
         </el-table-column>
       </el-table>
@@ -199,6 +201,7 @@
 import { ref, reactive, onMounted, nextTick, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { resultAPI, taskAPI } from '@/utils/api'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import dayjs from 'dayjs'
 import utc from 'dayjs/plugin/utc'
 import timezone from 'dayjs/plugin/timezone'
@@ -551,6 +554,31 @@ const viewFile = async (row) => {
     logDialogVisible.value = true
   } catch (error) {
     console.error('Failed to load file:', error)
+  }
+}
+
+const viewReport = (row) => {
+  window.open(`/api/results/perf/${row.id}/view`, '_blank')
+}
+
+const deleteResult = async (row) => {
+  try {
+    await ElMessageBox.confirm(
+      `确定要删除这条测试结果吗？执行时间：${formatDate(row.execution_time)}`,
+      '确认删除',
+      {
+        confirmButtonText: '确定',
+        cancelButtonText: '取消',
+        type: 'warning'
+      }
+    )
+    await resultAPI.deletePerfResult(row.id)
+    ElMessage.success('删除成功')
+    loadResults()
+  } catch (error) {
+    if (error !== 'cancel') {
+      console.error('Failed to delete result:', error)
+    }
   }
 }
 

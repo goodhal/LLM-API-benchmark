@@ -40,9 +40,6 @@ def create_app(config_name='default'):
     # 配置日志
     setup_logging(app)
     
-    # 初始化调度器
-    init_scheduler(app)
-    
     # 注册蓝图
     from .routes.auth import auth_bp
     from .routes.tasks import tasks_bp
@@ -56,6 +53,9 @@ def create_app(config_name='default'):
     with app.app_context():
         db.create_all()
         create_initial_admin(app)
+    
+    # 初始化调度器
+    init_scheduler(app)
     
     # 前端路由处理（SPA）- 必须放在所有 API 路由之后
     @app.route('/', defaults={'path': ''})
@@ -108,9 +108,11 @@ def setup_logging(app):
 
 def init_scheduler(app):
     """初始化任务调度器"""
-    # 如果调度器已经在运行，跳过配置
     if scheduler.running:
         return
+
+    if not hasattr(app, '_scheduler_configured'):
+        app._scheduler_configured = True
 
     # 配置调度器
     jobstores = {

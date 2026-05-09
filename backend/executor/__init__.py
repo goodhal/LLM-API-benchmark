@@ -3,14 +3,16 @@
 """
 import subprocess
 import os
+import sys
 import re
 import json
+import traceback
+import time as time_module
 from datetime import datetime
 from pathlib import Path
-from threading import Thread
-import threading
+from threading import Thread, Lock
 from ..models import db, Task, PerfTestResult, QualityTestResult
-from flask import current_app
+from ..config import config
 
 
 class TaskExecutor:
@@ -18,28 +20,23 @@ class TaskExecutor:
     
     def __init__(self):
         self.running_tasks = {}
-        self.lock = threading.Lock()
+        self.lock = Lock()
     
-    def execute_async(self, task):
+    def execute_async(self, task, app):
         """异步执行任务"""
-        # 获取当前 app 实例
-        app = current_app._get_current_object()
-        thread = Thread(target=self._execute_task, args=(app, task.id))
-        thread.daemon = True
+        thread = Thread(target=self._execute_task, args=(task.id, app), daemon=True)
         thread.start()
     
     def execute_scheduled(self, task_id):
         """调度执行任务"""
         from .. import create_app
-        
         app = create_app()
         with app.app_context():
-            task = Task.query.get(task_id)
+            task = db.session.get(Task, task_id)
             if task and task.is_enabled:
-                self._execute_task(task_id)
+                self._execute_task(task_id, app)
     
     def stop(self, task):
-        """停止任务"""
         with self.lock:
             if task.id in self.running_tasks:
                 process = self.running_tasks[task.id]
@@ -51,6 +48,19 @@ class TaskExecutor:
         task.status = 'idle'
         db.session.commit()
     
+    def _safe_commit(self):
+        """带重试的数据库提交，解决线程 SQLite 锁冲突"""
+        for retry in range(10):
+            try:
+                db.session.commit()
+                return
+            except Exception as e:
+                if 'database is locked' in str(e).lower():
+                    time_module.sleep(0.5 * (retry + 1))
+                else:
+                    raise
+        db.session.commit()
+
     def _update_next_run_time(self, task):
         """更新下次执行时间"""
         from .. import scheduler
@@ -59,26 +69,24 @@ class TaskExecutor:
         job = scheduler.get_job(job_id)
         
         if job and job.next_run_time:
-            # 直接存储本地时间（北京时间）
             task.next_run_time = job.next_run_time.replace(tzinfo=None) if job.next_run_time.tzinfo else job.next_run_time
-            db.session.commit()
-    
-    def _execute_task(self, app, task_id):
-        """执行任务"""
+            self._safe_commit()
+
+    def _execute_task(self, task_id, app):
+        """执行任务（在线程中运行）"""
         with app.app_context():
-            task = Task.query.get(task_id)
+            task = db.session.get(Task, task_id)
             if not task:
+                print(f"[TaskExecutor] Task {task_id} not found", file=sys.stderr)
                 return
             
             try:
-                # 更新任务状态
                 task.status = 'running'
                 task.last_run_time = datetime.now()
-                db.session.commit()
-
+                self._safe_commit()
                 app.logger.info(f"[Task {task_id}] Starting: {task.name}")
+                print(f"[TaskExecutor] Task {task_id} started: {task.name}", file=sys.stderr, flush=True)
 
-                # 根据任务类型执行
                 if task.task_type == 'perf_test':
                     result = self._execute_perf_test(task, app)
                 elif task.task_type == 'quality_test':
@@ -86,20 +94,26 @@ class TaskExecutor:
                 else:
                     raise ValueError(f"Unknown task type: {task.task_type}")
 
-                # 更新任务状态
-                task.status = 'success'
-                db.session.commit()
-                app.logger.info(f"[Task {task_id}] Completed successfully")
-
-                # 更新下次执行时间
+                task = db.session.get(Task, task_id)
+                has_failed = result and hasattr(result, 'status') and result.status == 'failed'
+                task.status = 'failed' if has_failed else 'success'
+                self._safe_commit()
+                if has_failed:
+                    app.logger.warning(f"[Task {task_id}] Process exited with error, marked as failed")
+                else:
+                    app.logger.info(f"[Task {task_id}] Completed successfully")
+                    print(f"[TaskExecutor] Task {task_id} completed successfully", file=sys.stderr, flush=True)
                 self._update_next_run_time(task)
 
             except Exception as e:
-                app.logger.error(f"[Task {task_id}] Failed: {str(e)}")
-                task.status = 'failed'
-                db.session.commit()
-
-                # 即使失败也要更新下次执行时间
+                traceback.print_exc(file=sys.stderr)
+                app.logger.error(f"[Task {task_id}] Failed: {str(e)}\n{traceback.format_exc()}")
+                print(f"[TaskExecutor] Task {task_id} FAILED: {e}", file=sys.stderr, flush=True)
+                try:
+                    task.status = 'failed'
+                    self._safe_commit()
+                except:
+                    pass
                 self._update_next_run_time(task)
     
     def _execute_perf_test(self, task, app):
@@ -113,9 +127,9 @@ class TaskExecutor:
         timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
         unique_output_dir = f"evalscope_outputs/task_{task.id}"
         
-        # 构建命令（使用正确的参数名）
+        # 构建命令
         cmd = [
-            'evalscope', 'perf',
+            sys.executable, '-m', 'evalscope.cli.cli', 'perf',
             '--model', config['model'],
             '--api', config.get('api', 'openai'),
             '--url', config['url'],
@@ -135,7 +149,7 @@ class TaskExecutor:
         ]
         
         # 格式化命令为多行显示
-        cmd_str = ' \\\n  '.join(['evalscope perf'] + [
+        cmd_str = ' \\\n  '.join([f'{sys.executable} -m evalscope.cli.cli perf'] + [
             f'--model {config["model"]}',
             f"--api {config.get('api', 'openai')}",
             f"--url {config['url']}",
@@ -159,7 +173,7 @@ class TaskExecutor:
         if use_mock:
             cmd = ['./mock_evalscope.sh'] + cmd[1:]
         
-        # 创建输出目录和文件（提前创建，支持实时写入）
+        # 创建输出目录和文件
         output_dir = Path(app.config['UPLOAD_FOLDER']) / f"task_{task.id}"
         output_dir.mkdir(parents=True, exist_ok=True)
         timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
@@ -167,53 +181,57 @@ class TaskExecutor:
         filepath = output_dir / filename
         output_file = str(filepath)
         
-        # 执行命令（使用行缓冲实现实时读取）
-        process = subprocess.Popen(
-            cmd,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            text=True,
-            bufsize=1  # 行缓冲
-        )
+        # 构造环境变量
+        env = os.environ.copy()
+        env['MODELSCOPE_CREDENTIALS_PATH'] = os.path.abspath(app.config.get('MODELSCOPE_CREDENTIALS_PATH', 'data/modelscope/credentials'))
+        env['MODELSCOPE_CACHE'] = os.path.abspath(app.config.get('MODELSCOPE_CACHE', 'data/modelscope_cache'))
+        env['MODELSCOPE_HOME'] = os.path.dirname(env['MODELSCOPE_CREDENTIALS_PATH'])
+        env['PYTHONIOENCODING'] = 'utf-8'
+        env['PYTHONUTF8'] = '1'
+        env['NO_COLOR'] = '1'
+        env['CLICOLOR'] = '0'
+        env['TERM'] = 'dumb'
+        os.makedirs(os.path.dirname(env['MODELSCOPE_CREDENTIALS_PATH']), exist_ok=True)
+        os.makedirs(env['MODELSCOPE_CACHE'], exist_ok=True)
         
-        # 记录运行中的任务
-        with self.lock:
-            self.running_tasks[task.id] = process
+        # 执行命令，stdout 直接写入文件
+        timeout = app.config.get('TASK_TIMEOUT', 3600)
+        try:
+            with open(filepath, 'w', encoding='utf-8') as f:
+                result = subprocess.run(
+                    cmd,
+                    stdout=f,
+                    stderr=subprocess.STDOUT,
+                    text=True,
+                    env=env,
+                    timeout=timeout
+                )
+        except subprocess.TimeoutExpired:
+            app.logger.error(f"Task {task.id} timed out after {timeout}s")
+            return None
         
-        # 实时读取输出并写入文件
-        output_lines = []
-        with open(filepath, 'w', encoding='utf-8') as f:
-            for line in iter(process.stdout.readline, ''):
-                if not line:
-                    break
-                f.write(line)
-                f.flush()  # 立即刷新到磁盘
-                output_lines.append(line)
-        
-        # 等待进程结束
-        process.wait()
-        output = ''.join(output_lines)
+        # 读取输出用于解析
+        with open(filepath, 'r', encoding='utf-8') as f:
+            output = f.read()
 
-        # 清理
-        with self.lock:
-            if task.id in self.running_tasks:
-                del self.running_tasks[task.id]
+        app.logger.info(f"[Task {task.id}] Process exited with rc={result.returncode}, output length={len(output)}")
 
         # 检查进程返回码
-        if process.returncode != 0:
-            app.logger.warning(f"Process terminated with return code: {process.returncode}")
-            raise RuntimeError(f"Process terminated unexpectedly (return code: {process.returncode})")
+        if result.returncode != 0:
+            app.logger.warning(f"Process terminated with return code: {result.returncode}, stderr preview: {output[-500:] if output else 'EMPTY'}")
 
-        # 解析结果
-        metrics = self._parse_perf_output(output)
+        # 从 evalscope JSON 输出中解析结果
+        metrics = self._parse_perf_json(unique_output_dir, output)
 
-        # 必须解析到性能指标才算成功
         if not metrics:
-            app.logger.error("Failed to parse performance metrics from output")
-            raise RuntimeError("Failed to parse performance metrics - no valid results found in output")
-        
+            app.logger.warning("Could not parse detailed metrics from JSON, trying text fallback")
+            metrics = self._parse_perf_output(output)
+
+        if not metrics:
+            app.logger.warning("Could not parse detailed metrics, using summary only")
+
         # 保存结果到数据库
-        result = PerfTestResult(
+        perf_result = PerfTestResult(
             task_id=task.id,
             execution_time=datetime.now(),
             command=cmd_str,
@@ -221,23 +239,24 @@ class TaskExecutor:
             status='success'
         )
         
-        result.concurrency = metrics.get('concurrency')
-        result.avg_latency = metrics.get('avg_latency')
-        result.p99_latency = metrics.get('p99_latency')
-        result.avg_ttft = metrics.get('avg_ttft')
-        result.p99_ttft = metrics.get('p99_ttft')
-        result.avg_tpot = metrics.get('avg_tpot')
-        result.p99_tpot = metrics.get('p99_tpot')
-        result.rps = metrics.get('rps')
-        result.gen_toks = metrics.get('gen_toks')
-        result.success_rate = metrics.get('success_rate')
+        if metrics:
+            perf_result.concurrency = metrics.get('concurrency')
+            perf_result.avg_latency = metrics.get('avg_latency')
+            perf_result.p99_latency = metrics.get('p99_latency')
+            perf_result.avg_ttft = metrics.get('avg_ttft')
+            perf_result.p99_ttft = metrics.get('p99_ttft')
+            perf_result.avg_tpot = metrics.get('avg_tpot')
+            perf_result.p99_tpot = metrics.get('p99_tpot')
+            perf_result.rps = metrics.get('rps')
+            perf_result.gen_toks = metrics.get('gen_toks')
+            perf_result.success_rate = metrics.get('success_rate')
         
-        db.session.add(result)
-        db.session.commit()
+        db.session.add(perf_result)
+        self._safe_commit()
         
-        app.logger.info(f"Perf test result saved: {result.id}")
+        app.logger.info(f"Perf test result saved: {perf_result.id}")
         
-        return result
+        return perf_result
     
     def _execute_quality_test(self, task, app):
         """执行模型质量测试"""
@@ -245,17 +264,10 @@ class TaskExecutor:
         
         app.logger.info(f"Executing quality test with config: {config}")
         
-        # 确定 audit.py 的路径
-        audit_path = config.get('audit_path', '')
-        if audit_path:
-            # 如果指定了路径，使用指定路径
-            audit_script = os.path.join(audit_path, 'audit.py')
-            work_dir = audit_path
-        else:
-            # 否则使用项目根目录下的 audit.py
-            project_root = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
-            audit_script = os.path.join(project_root, 'audit.py')
-            work_dir = project_root
+        # 始终使用项目根目录下的 audit.py
+        project_root = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
+        audit_script = os.path.join(project_root, 'audit.py')
+        work_dir = project_root
         
         app.logger.info(f"Audit script path: {audit_script}")
         app.logger.info(f"Working directory: {work_dir}")
@@ -269,61 +281,55 @@ class TaskExecutor:
         output_file = str(filepath)
         
         # 报告文件路径（与日志文件同目录，命名为 quality_{timestamp}_report.md）
-        report_path = output_file # str(output_dir / f"quality_{timestamp}_report.md")
+        report_path = str(output_dir / f"quality_{timestamp}_report.md")
         
         # 构建命令
+        model_name = config.get('model', 'claude-opus-4-6')
         cmd = [
-            'python', audit_script,
+            sys.executable, audit_script,
             '--key', config['api_key'],
             '--url', config['url'],
-            # '--output', report_path
+            '--model', model_name,
+            '--output', report_path
         ]
         
         # 格式化命令为多行显示
         cmd_str = ' \\\n  '.join([
-            f'python {audit_script}',
-            f"--key {config['api_key'][:10]}...",  # 隐藏部分密钥
+            f'{sys.executable} {audit_script}',
+            f"--key {config['api_key'][:10]}...",
             f"--url {config['url']}",
-            # f"--output {report_path}"
+            f"--model {model_name}",
+            f"--output {report_path}"
         ])
 
-        # 执行命令（使用行缓冲实现实时读取）
-        process = subprocess.Popen(
-            cmd,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            text=True,
-            bufsize=1,  # 行缓冲
-            cwd=work_dir
-        )
-        
-        # 记录运行中的任务
-        with self.lock:
-            self.running_tasks[task.id] = process
-        
-        # 实时读取输出并写入文件
-        output_lines = []
-        with open(filepath, 'w', encoding='utf-8') as f:
-            for line in iter(process.stdout.readline, ''):
-                if not line:
-                    break
-                f.write(line)
-                f.flush()  # 立即刷新到磁盘
-                output_lines.append(line)
-        
-        # 等待进程结束
-        process.wait()
-        output = ''.join(output_lines)
+        # 构造环境变量
+        env = os.environ.copy()
+        env['PYTHONIOENCODING'] = 'utf-8'
+        env['PYTHONUTF8'] = '1'
+        env['NO_COLOR'] = '1'
+        env['CLICOLOR'] = '0'
+        env['TERM'] = 'dumb'
 
-        # 清理
-        with self.lock:
-            if task.id in self.running_tasks:
-                del self.running_tasks[task.id]
+        # 执行命令，stdout 直接写入文件
+        timeout = app.config.get('TASK_TIMEOUT', 3600)
+        with open(filepath, 'w', encoding='utf-8') as f:
+            result = subprocess.run(
+                cmd,
+                stdout=f,
+                stderr=subprocess.STDOUT,
+                text=True,
+                cwd=work_dir,
+                env=env,
+                timeout=timeout
+            )
+        
+        # 读取输出用于解析
+        with open(filepath, 'r', encoding='utf-8') as f:
+            output = f.read()
 
         # 检查进程返回码
-        if process.returncode != 0:
-            app.logger.warning(f"Process terminated with return code: {process.returncode}")
-            raise RuntimeError(f"Process terminated unexpectedly (return code: {process.returncode})")
+        if result.returncode != 0:
+            app.logger.warning(f"Process terminated with return code: {result.returncode}")
 
         # 从报告文件中解析结果
         risk_summary = {}
@@ -339,12 +345,13 @@ class TaskExecutor:
         app.logger.info(f"Parsed risk summary: {risk_summary}")
         
         # 保存结果到数据库
+        result_status = 'success' if result.returncode == 0 else 'failed'
         result = QualityTestResult(
             task_id=task.id,
             execution_time=datetime.now(),
             command=cmd_str,
             output_file=output_file,
-            status='success'
+            status=result_status
         )
         
         if risk_summary:
@@ -392,11 +399,87 @@ class TaskExecutor:
         
         return str(filepath)
     
+    _ANSI_PATTERN = re.compile(r'\x1b\[[0-9;]*m')
+    
+    def _strip_ansi(self, text):
+        return self._ANSI_PATTERN.sub('', text)
+    
+    def _parse_perf_json(self, output_dir, log_output=''):
+        """从 evalscope 生成的 JSON 文件中解析性能指标"""
+        import time
+        
+        match = re.search(r"Save the summary to:\s*(\S+)", log_output or '')
+        if match:
+            log_dir = match.group(1)
+            log_dir = re.sub(r'[\\/][^\\/]*$', '', log_dir)
+        
+        base_path = Path(output_dir).resolve()
+        print(f"[TaskExecutor] _parse_perf_json: output_dir={output_dir}, resolved={base_path}, exists={base_path.exists()}, cwd={os.getcwd()}", file=sys.stderr, flush=True)
+        if not base_path.exists():
+            print(f"[TaskExecutor] _parse_perf_json: base_path does not exist, returning None", file=sys.stderr, flush=True)
+            return None
+        
+        for attempt in range(3):
+            summary_files = sorted(base_path.rglob('benchmark_summary.json'), reverse=True)
+            
+            if not summary_files and match:
+                alt_path = Path(log_dir)
+                if alt_path.exists():
+                    summary_files = sorted(alt_path.rglob('benchmark_summary.json'), reverse=True)
+            
+            print(f"[TaskExecutor] _parse_perf_json attempt={attempt}: found {len(summary_files)} summary files", file=sys.stderr, flush=True)
+            if summary_files:
+                break
+            time.sleep(1)
+        
+        if not summary_files:
+            print(f"[TaskExecutor] _parse_perf_json: no summary files after {attempt+1} attempts", file=sys.stderr, flush=True)
+            return None
+        
+        summary_path = summary_files[0]
+        percentile_path = summary_path.parent / 'benchmark_percentile.json'
+        
+        try:
+            with open(summary_path, 'r', encoding='utf-8') as f:
+                summary = json.load(f)
+            
+            p99_latency = None
+            p99_ttft = None
+            p99_tpot = None
+            if percentile_path.exists():
+                with open(percentile_path, 'r', encoding='utf-8') as f:
+                    percentiles = json.load(f)
+                p99 = next((p for p in percentiles if p.get('Percentiles') == '99%'), None)
+                if p99:
+                    p99_latency = p99.get('Latency (s)')
+                    p99_ttft = p99.get('TTFT (ms)')
+                    p99_tpot = p99.get('TPOT (ms)')
+            
+            total = summary.get('Total Requests', 1)
+            success = summary.get('Success Requests', 0)
+            success_rate = round(success / total * 100, 1) if total > 0 else 0
+            
+            return {
+                'concurrency': summary.get('Concurrency'),
+                'rps': summary.get('Req Throughput (req/s)'),
+                'avg_latency': summary.get('Avg Latency (s)'),
+                'p99_latency': p99_latency or summary.get('Avg Latency (s)'),
+                'avg_ttft': summary.get('TTFT (ms)'),
+                'p99_ttft': p99_ttft or summary.get('TTFT (ms)'),
+                'avg_tpot': summary.get('TPOT (ms)'),
+                'p99_tpot': p99_tpot or summary.get('TPOT (ms)'),
+                'gen_toks': summary.get('Output Throughput (tok/s)'),
+                'success_rate': success_rate,
+            }
+        except Exception as e:
+            print(f"[TaskExecutor] JSON parse error: {e}", file=sys.stderr, flush=True)
+            return None
+
     def _parse_perf_output(self, output):
         """解析 evalscope perf 输出"""
-        # 匹配性能指标表格行的正则表达式
+        output = self._strip_ansi(output)
         pattern = re.compile(
-            r'│\s*(\d+)\s*│\s*(\S+)\s*│\s*([\d.]+)\s*│\s*'
+            r'│\s*(\d+)\s*│\s*(\S+)\s*│\s*(\d+)\s*│\s*'
             r'([\d.]+)\s*│\s*([\d.]+)\s*│\s*'
             r'([\d.]+)\s*│\s*([\d.]+)\s*│\s*'
             r'([\d.]+)\s*│\s*([\d.]+)\s*│\s*'
@@ -409,15 +492,15 @@ class TaskExecutor:
                 return {
                     'concurrency': int(match.group(1)),
                     'rate': match.group(2),
-                    'rps': float(match.group(3)),
-                    'avg_latency': float(match.group(4)),
-                    'p99_latency': float(match.group(5)),
-                    'avg_ttft': float(match.group(6)),
-                    'p99_ttft': float(match.group(7)),
-                    'avg_tpot': float(match.group(8)),
-                    'p99_tpot': float(match.group(9)),
-                    'gen_toks': float(match.group(10)),
-                    'success_rate': float(match.group(11))
+                    'rps': float(match.group(4)),
+                    'avg_latency': float(match.group(5)),
+                    'p99_latency': float(match.group(6)),
+                    'avg_ttft': float(match.group(7)),
+                    'p99_ttft': float(match.group(8)),
+                    'avg_tpot': float(match.group(9)),
+                    'p99_tpot': float(match.group(10)),
+                    'gen_toks': float(match.group(11)),
+                    'success_rate': float(match.group(12))
                 }
         
         return None
@@ -460,8 +543,8 @@ class TaskExecutor:
         """从报告文件中解析 Risk Summary"""
         risk_summary = {}
         
-        # 提取 Risk Summary 部分
-        risk_section_match = re.search(r'## Risk Summary\s*\n(.*?)(?=\n---|\n## \d)', report_content, re.DOTALL)
+        # 提取风险摘要部分（支持中英文）
+        risk_section_match = re.search(r'## (?:Risk Summary|风险摘要)\s*\n(.*?)(?=\n---|\n## \d)', report_content, re.DOTALL)
         if not risk_section_match:
             return risk_summary
         
@@ -474,8 +557,8 @@ class TaskExecutor:
         for i, item in enumerate(items):
             risk_summary[f'item_{i+1}'] = item.strip()
         
-        # 同时提取总体评级
-        rating_match = re.search(r'(🔴|🟡|🟢).*?(HIGH|MEDIUM|LOW|CRITICAL)', report_content, re.IGNORECASE)
+        # 同时提取总体评级（支持中英文）
+        rating_match = re.search(r'(🔴|🟡|🟢).*?(HIGH|MEDIUM|LOW|CRITICAL|高风险|中风险|低风险)', report_content, re.IGNORECASE)
         if rating_match:
             risk_summary['overall_rating'] = f"{rating_match.group(1)} {rating_match.group(2).upper()}"
         else:
@@ -483,10 +566,10 @@ class TaskExecutor:
             red_count = risk_section.count('🔴')
             yellow_count = risk_section.count('🟡')
             if red_count >= 2:
-                risk_summary['overall_rating'] = '🔴 HIGH RISK'
+                risk_summary['overall_rating'] = '🔴 高风险'
             elif red_count == 1 or yellow_count >= 2:
-                risk_summary['overall_rating'] = '🟡 MEDIUM RISK'
+                risk_summary['overall_rating'] = '🟡 中风险'
             else:
-                risk_summary['overall_rating'] = '🟢 LOW RISK'
+                risk_summary['overall_rating'] = '🟢 低风险'
         
         return risk_summary

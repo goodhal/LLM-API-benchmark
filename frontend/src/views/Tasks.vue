@@ -167,8 +167,8 @@
             <el-input v-model="taskForm.config.api_key" type="password" placeholder="sk-xxxx" />
           </el-form-item>
           
-          <el-form-item label="Audit 路径">
-            <el-input v-model="taskForm.config.audit_path" placeholder="audit.py 所在目录" />
+          <el-form-item label="模型名称" prop="config.model">
+            <el-input v-model="taskForm.config.model" placeholder="claude-opus-4-6" />
           </el-form-item>
         </template>
         
@@ -282,8 +282,7 @@ const taskForm = reactive({
     min_tokens: 128,
     max_tokens: 128,
     connect_timeout: 60,
-    read_timeout: 120,
-    audit_path: ''
+    read_timeout: 120
   },
   schedule_type: 'manual',
   cron_expression: '',
@@ -337,7 +336,6 @@ const handleEdit = (row) => {
       max_tokens: 128,
       connect_timeout: 60,
       read_timeout: 120,
-      audit_path: '',
       // 覆盖为实际值
       ...parsedConfig
     },
@@ -512,8 +510,7 @@ const resetForm = () => {
       min_tokens: 128,
       max_tokens: 128,
       connect_timeout: 60,
-      read_timeout: 120,
-      audit_path: ''
+      read_timeout: 120
     },
     schedule_type: 'manual',
     cron_expression: '',

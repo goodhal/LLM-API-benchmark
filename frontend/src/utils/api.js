@@ -79,13 +79,17 @@ export const resultAPI = {
   getPerfResults: (params) => api.get('/results/perf', { params }),
   getPerfResult: (id) => api.get(`/results/perf/${id}`),
   getPerfResultFile: (id) => api.get(`/results/perf/${id}/file`),
+  deletePerfResult: (id) => api.delete(`/results/perf/${id}`),
   getPerfChartData: (params) => api.get('/results/perf/chart-data', { params }),
   getPerfModels: () => api.get('/results/perf/models'),
+  getPerfResultHtml: (id) => api.get(`/results/perf/${id}/html`),
   
   getQualityResults: (params) => api.get('/results/quality', { params }),
   getQualityResult: (id) => api.get(`/results/quality/${id}`),
   getQualityResultFile: (id) => api.get(`/results/quality/${id}/file`),
   getQualityResultRaw: (id) => api.get(`/results/quality/${id}/raw`),
+  getQualityResultHtml: (id) => api.get(`/results/quality/${id}/html`),
+  deleteQualityResult: (id) => api.delete(`/results/quality/${id}`),
   
   getStatistics: () => api.get('/results/statistics')
 }

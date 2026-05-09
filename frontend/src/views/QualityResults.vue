@@ -125,27 +125,21 @@
           </template>
         </el-table-column>
         
-        <el-table-column label="操作" min-width="100" fixed="right">
+        <el-table-column label="操作" min-width="180" fixed="right">
           <template #default="{ row }">
             <el-button size="small" @click="viewReport(row)">查看报告</el-button>
+            <el-button size="small" type="danger" @click="deleteResult(row)">删除</el-button>
           </template>
         </el-table-column>
       </el-table>
     </el-card>
-    
-    <!-- 报告查看对话框 -->
-    <el-dialog v-model="reportDialogVisible" title="测试报告" width="80%">
-      <div v-if="reportContent" class="report-content">
-        <pre>{{ reportContent }}</pre>
-      </div>
-      <el-empty v-else description="无法加载报告内容" />
-    </el-dialog>
   </div>
 </template>
 
 <script setup>
 import { ref, reactive, onMounted } from 'vue'
 import { resultAPI, taskAPI } from '@/utils/api'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import dayjs from 'dayjs'
 import utc from 'dayjs/plugin/utc'
 import timezone from 'dayjs/plugin/timezone'
@@ -193,13 +187,28 @@ const loadResults = async () => {
   }
 }
 
-const viewReport = async (row) => {
+const viewReport = (row) => {
+  window.open(`/api/results/quality/${row.id}/view`, '_blank')
+}
+
+const deleteResult = async (row) => {
   try {
-    const res = await resultAPI.getQualityResultRaw(row.id)
-    reportContent.value = res.content
-    reportDialogVisible.value = true
+    await ElMessageBox.confirm(
+      `确定要删除这条测试结果吗？执行时间：${formatDate(row.execution_time)}`,
+      '确认删除',
+      {
+        confirmButtonText: '确定',
+        cancelButtonText: '取消',
+        type: 'warning'
+      }
+    )
+    await resultAPI.deleteQualityResult(row.id)
+    ElMessage.success('删除成功')
+    loadResults()
   } catch (error) {
-    console.error('Failed to load report:', error)
+    if (error !== 'cancel') {
+      console.error('Failed to delete result:', error)
+    }
   }
 }
 

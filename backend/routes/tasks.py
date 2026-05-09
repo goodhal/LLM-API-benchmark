@@ -172,13 +172,13 @@ def delete_task(task_id):
 @login_required
 def run_task(task_id):
     """立即执行任务"""
+    from flask import current_app
     task = Task.query.get_or_404(task_id)
     
     if task.status == 'running':
         return jsonify({'error': 'Task is already running'}), 400
     
-    # 异步执行任务
-    executor.execute_async(task)
+    executor.execute_async(task, current_app._get_current_object())
     
     return jsonify({'message': 'Task started successfully'}), 200
 
@@ -319,7 +319,7 @@ def run_scheduled_task(task_id):
                 app.logger.info(f"Task {task_id} has ended, skipping execution")
                 return
 
-            executor.execute_async(task)
+            executor.execute_async(task, app)
 
 
 def unschedule_task(task):
