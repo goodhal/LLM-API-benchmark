@@ -70,6 +70,8 @@ class Task(db.Model):
                                    cascade='all, delete-orphan')
     quality_results = db.relationship('QualityTestResult', backref='task', lazy='dynamic',
                                       cascade='all, delete-orphan')
+    availability_results = db.relationship('AvailabilityTestResult', backref='task', lazy='dynamic',
+                                          cascade='all, delete-orphan')
     
     def to_dict(self):
         return {
@@ -218,6 +220,60 @@ class QualityTestResult(db.Model):
             'risk_summary_json': self.risk_summary_json,
             'output_file': self.output_file,
             'report_file': self.report_file,
+            'status': self.status,
+            'error_message': self.error_message,
+            'created_at': self.created_at.isoformat()
+        }
+
+
+class AvailabilityTestResult(db.Model):
+    """服务可用性测试结果表"""
+    __tablename__ = 'availability_test_results'
+
+    id = db.Column(db.Integer, primary_key=True)
+    task_id = db.Column(db.Integer, db.ForeignKey('tasks.id'), nullable=False)
+
+    # 执行信息
+    execution_time = db.Column(db.DateTime, nullable=False)  # 执行时间
+
+    # 渠道信息
+    channel_name = db.Column(db.String(200), nullable=False)  # 渠道名称
+    model_name = db.Column(db.String(200), nullable=False)  # 模型名称
+
+    # 性能指标
+    concurrency = db.Column(db.Integer)  # 并发数
+    avg_latency = db.Column(db.Float)  # 平均延迟
+    p99_latency = db.Column(db.Float)  # P99延迟
+    avg_ttft = db.Column(db.Float)  # 平均首字延迟
+    p99_ttft = db.Column(db.Float)  # P99首字延迟
+    rps = db.Column(db.Float)  # 每秒请求数
+    gen_toks = db.Column(db.Float)  # 生成速度
+    success_rate = db.Column(db.Float)  # 成功率
+
+    # 状态
+    status = db.Column(db.String(20), default='success')  # 'success', 'failed'
+    error_message = db.Column(db.Text)  # 错误信息
+
+    created_at = db.Column(db.DateTime, default=datetime.now)
+
+    def to_dict(self):
+        task_name = self.task.name if self.task else None
+
+        return {
+            'id': self.id,
+            'task_id': self.task_id,
+            'task_name': task_name,
+            'execution_time': self.execution_time.isoformat(),
+            'channel_name': self.channel_name,
+            'model_name': self.model_name,
+            'concurrency': self.concurrency,
+            'avg_latency': self.avg_latency,
+            'p99_latency': self.p99_latency,
+            'avg_ttft': self.avg_ttft,
+            'p99_ttft': self.p99_ttft,
+            'rps': self.rps,
+            'gen_toks': self.gen_toks,
+            'success_rate': self.success_rate,
             'status': self.status,
             'error_message': self.error_message,
             'created_at': self.created_at.isoformat()

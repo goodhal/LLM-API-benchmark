@@ -91,6 +91,10 @@ export const resultAPI = {
   getQualityResultHtml: (id) => api.get(`/results/quality/${id}/html`),
   deleteQualityResult: (id) => api.delete(`/results/quality/${id}`),
   
+  getAvailabilityResults: (params) => api.get('/results/availability', { params }),
+  getAvailabilityModels: () => api.get('/results/availability/models'),
+  getAvailabilityChartData: (params) => api.get('/results/availability/chart-data', { params }),
+  
   getStatistics: () => api.get('/results/statistics')
 }
 

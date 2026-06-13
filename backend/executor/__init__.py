@@ -91,6 +91,8 @@ class TaskExecutor:
                     result = self._execute_perf_test(task, app)
                 elif task.task_type == 'quality_test':
                     result = self._execute_quality_test(task, app)
+                elif task.task_type == 'availability_test':
+                    result = self._execute_availability_test(task, app)
                 else:
                     raise ValueError(f"Unknown task type: {task.task_type}")
 
@@ -478,30 +480,96 @@ class TaskExecutor:
     def _parse_perf_output(self, output):
         """解析 evalscope perf 输出"""
         output = self._strip_ansi(output)
-        pattern = re.compile(
-            r'│\s*(\d+)\s*│\s*(\S+)\s*│\s*(\d+)\s*│\s*'
-            r'([\d.]+)\s*│\s*([\d.]+)\s*│\s*'
-            r'([\d.]+)\s*│\s*([\d.]+)\s*│\s*'
-            r'([\d.]+)\s*│\s*([\d.]+)\s*│\s*'
-            r'([\d.]+)\s*│\s*([\d.]+)%\s*│'
-        )
         
-        for line in output.split('\n'):
-            match = pattern.search(line)
-            if match:
-                return {
-                    'concurrency': int(match.group(1)),
-                    'rate': match.group(2),
-                    'rps': float(match.group(4)),
-                    'avg_latency': float(match.group(5)),
-                    'p99_latency': float(match.group(6)),
-                    'avg_ttft': float(match.group(7)),
-                    'p99_ttft': float(match.group(8)),
-                    'avg_tpot': float(match.group(9)),
-                    'p99_tpot': float(match.group(10)),
-                    'gen_toks': float(match.group(11)),
-                    'success_rate': float(match.group(12))
-                }
+        result = {
+            'concurrency': None,
+            'rate': None,
+            'rps': None,
+            'avg_latency': None,
+            'p99_latency': None,
+            'avg_ttft': None,
+            'p99_ttft': None,
+            'avg_tpot': None,
+            'p99_tpot': None,
+            'gen_toks': None,
+            'success_rate': None
+        }
+        
+        # 方法1：尝试解析新的 Unicode 表格格式
+        # Performance Overview 表格（支持 ┃ 和 │ 混合）
+        # 表头使用 ┃，数据使用 │
+        perf_pattern = re.compile(
+            r'┃?\s*(\d+)\s*[┃│]\s*(\S+)\s*[┃│]\s*(\d+)\s*[┃│]\s*'
+            r'([\d.]+)\s*[┃│]\s*([\d.]+)\s*[┃│]\s*([\d.]+)%\s*[┃│]?'
+        )
+        perf_match = perf_pattern.search(output)
+        if perf_match:
+            result['concurrency'] = int(perf_match.group(1))
+            result['rate'] = perf_match.group(2)
+            result['rps'] = float(perf_match.group(4))
+            result['gen_toks'] = float(perf_match.group(5))
+            result['success_rate'] = float(perf_match.group(6))
+        
+        # Per-Request Metrics 表格（Latency 和 TTFT）
+        # 查找 Latency 行
+        latency_pattern = re.compile(
+            r'┃?\s*(\d+)\s*[┃│]\s*(\S+)\s*[┃│]\s*Latency \(s\)\s*[┃│]\s*'
+            r'([\d.]+)\s*[┃│]\s*([\d.]+)\s*[┃│]\s*([\d.]+)\s*[┃│]\s*([\d.]+)\s*[┃│]?'
+        )
+        latency_match = latency_pattern.search(output)
+        if latency_match:
+            result['avg_latency'] = float(latency_match.group(3))
+            result['p99_latency'] = float(latency_match.group(5))
+        
+        # 查找 TTFT 行（可能是 TTFT (ms) 或 Time To First Token (ms)）
+        # 注意：Per-Request Metrics 表格的前两列可能为空
+        ttft_pattern = re.compile(
+            r'[┃│]\s*[┃│]\s*[┃│]\s*(?:TTFT|Time To First Token)\s*\(ms\)\s*[┃│]\s*'
+            r'([\d.]+)\s*[┃│]\s*([\d.]+)\s*[┃│]\s*([\d.]+)\s*[┃│]\s*([\d.]+)\s*[┃│]?'
+        )
+        ttft_match = ttft_pattern.search(output)
+        if ttft_match:
+            result['avg_ttft'] = float(ttft_match.group(1))
+            result['p99_ttft'] = float(ttft_match.group(3))
+        
+        # 查找 TPOT 行
+        tpot_pattern = re.compile(
+            r'[┃│]\s*[┃│]\s*[┃│]\s*(?:TPOT|Time Per Output Token)\s*\(ms\)\s*[┃│]\s*'
+            r'([\d.]+)\s*[┃│]\s*([\d.]+)\s*[┃│]\s*([\d.]+)\s*[┃│]\s*([\d.]+)\s*[┃│]?'
+        )
+        tpot_match = tpot_pattern.search(output)
+        if tpot_match:
+            result['avg_tpot'] = float(tpot_match.group(1))
+            result['p99_tpot'] = float(tpot_match.group(3))
+        
+        # 方法2：备用解析 - 尝试解析旧的纯 ASCII 表格格式
+        if result['rps'] is None:
+            old_pattern = re.compile(
+                r'│\s*(\d+)\s*│\s*(\S+)\s*│\s*(\d+)\s*│\s*'
+                r'([\d.]+)\s*│\s*([\d.]+)\s*│\s*'
+                r'([\d.]+)\s*│\s*([\d.]+)\s*│\s*'
+                r'([\d.]+)\s*│\s*([\d.]+)\s*│\s*'
+                r'([\d.]+)\s*│\s*([\d.]+)%\s*│'
+            )
+            for line in output.split('\n'):
+                match = old_pattern.search(line)
+                if match:
+                    result['concurrency'] = int(match.group(1))
+                    result['rate'] = match.group(2)
+                    result['rps'] = float(match.group(4))
+                    result['avg_latency'] = float(match.group(5))
+                    result['p99_latency'] = float(match.group(6))
+                    result['avg_ttft'] = float(match.group(7))
+                    result['p99_ttft'] = float(match.group(8))
+                    result['avg_tpot'] = float(match.group(9))
+                    result['p99_tpot'] = float(match.group(10))
+                    result['gen_toks'] = float(match.group(11))
+                    result['success_rate'] = float(match.group(12))
+                    break
+        
+        # 检查是否有足够的数据
+        if result['rps'] is not None or result['gen_toks'] is not None:
+            return result
         
         return None
     
@@ -573,3 +641,167 @@ class TaskExecutor:
                 risk_summary['overall_rating'] = '🟢 低风险'
         
         return risk_summary
+    
+    def _execute_availability_test(self, task, app):
+        """执行服务可用性测试"""
+        from ..models import AvailabilityTestResult
+        
+        config = json.loads(task.config)
+        model_name = config.get('model', '')
+        channels = config.get('channels', [])
+        
+        # 测试参数
+        parallel = config.get('parallel', 1)
+        number = config.get('number', 10)
+        connect_timeout = config.get('connect_timeout', 60)
+        read_timeout = config.get('read_timeout', 120)
+        
+        app.logger.info(f"[Task {task.id}] Availability test - model: {model_name}, channels: {len(channels)}")
+        
+        # 对每个渠道执行测试
+        results = []
+        for channel in channels:
+            channel_name = channel.get('name', '')
+            channel_url = channel.get('url', '')
+            channel_api_key = channel.get('api_key', '')
+            
+            if not channel_url or not channel_api_key:
+                app.logger.warning(f"[Task {task.id}] Channel {channel_name} missing URL or API Key, skipping")
+                continue
+            
+            app.logger.info(f"[Task {task.id}] Testing channel: {channel_name}")
+            
+            # 执行性能测试
+            try:
+                perf_result = self._test_single_channel(
+                    task, app, channel_name, channel_url, channel_api_key, 
+                    model_name, parallel, number, connect_timeout, read_timeout
+                )
+                
+                # 保存结果
+                result = AvailabilityTestResult(
+                    task_id=task.id,
+                    execution_time=datetime.now(),
+                    channel_name=channel_name,
+                    model_name=model_name,
+                    concurrency=parallel,
+                    avg_latency=perf_result.get('avg_latency'),
+                    p99_latency=perf_result.get('p99_latency'),
+                    avg_ttft=perf_result.get('avg_ttft'),
+                    p99_ttft=perf_result.get('p99_ttft'),
+                    rps=perf_result.get('rps'),
+                    gen_toks=perf_result.get('gen_toks'),
+                    success_rate=perf_result.get('success_rate'),
+                    status='success'
+                )
+                db.session.add(result)
+                self._safe_commit()
+                results.append(result)
+                
+                app.logger.info(f"[Task {task.id}] Channel {channel_name} test completed: success_rate={perf_result.get('success_rate')}")
+                
+            except Exception as e:
+                app.logger.error(f"[Task {task.id}] Channel {channel_name} test failed: {str(e)}")
+                
+                # 保存失败结果
+                result = AvailabilityTestResult(
+                    task_id=task.id,
+                    execution_time=datetime.now(),
+                    channel_name=channel_name,
+                    model_name=model_name,
+                    concurrency=parallel,
+                    status='failed',
+                    error_message=str(e)
+                )
+                db.session.add(result)
+                self._safe_commit()
+                results.append(result)
+        
+        app.logger.info(f"[Task {task.id}] Availability test completed: {len(results)} channels tested")
+        
+        # 返回最后一个结果（用于判断整体状态）
+        if results:
+            failed_count = sum(1 for r in results if r.status == 'failed')
+            if failed_count > 0:
+                # 如果有失败的渠道，返回一个失败状态的结果
+                return results[-1] if results[-1].status == 'failed' else None
+            else:
+                return results[-1]
+        return None
+    
+    def _test_single_channel(self, task, app, channel_name, channel_url, channel_api_key, 
+                             model_name, parallel, number, connect_timeout, read_timeout):
+        """测试单个渠道的性能"""
+        
+        # 生成唯一的输出目录名
+        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+        unique_output_dir = f"evalscope_outputs/task_{task.id}_channel_{channel_name}"
+        
+        # 构建命令
+        cmd = [
+            sys.executable, '-m', 'evalscope.cli.cli', 'perf',
+            '--model', model_name,
+            '--api', 'openai',
+            '--url', channel_url,
+            '--api-key', channel_api_key,
+            '--tokenizer-path', 'Qwen/Qwen2-1.5B-Instruct',
+            '--parallel', str(parallel),
+            '-n', str(number),
+            '--dataset', 'random',
+            '--min-prompt-length', '10',
+            '--max-prompt-length', '20',
+            '--min-tokens', '128',
+            '--max-tokens', '128',
+            '--connect-timeout', str(connect_timeout),
+            '--read-timeout', str(read_timeout),
+            '--outputs-dir', unique_output_dir,
+            '--stream'
+        ]
+        
+        # 创建输出目录和文件
+        output_dir = Path(app.config['UPLOAD_FOLDER']) / f"task_{task.id}"
+        output_dir.mkdir(parents=True, exist_ok=True)
+        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+        filename = f"availability_{channel_name}_{timestamp}.txt"
+        filepath = output_dir / filename
+        
+        # 构造环境变量
+        env = os.environ.copy()
+        env['MODELSCOPE_CREDENTIALS_PATH'] = os.path.abspath(app.config.get('MODELSCOPE_CREDENTIALS_PATH', 'data/modelscope/credentials'))
+        env['MODELSCOPE_CACHE'] = os.path.abspath(app.config.get('MODELSCOPE_CACHE', 'data/modelscope_cache'))
+        env['MODELSCOPE_HOME'] = os.path.dirname(env['MODELSCOPE_CREDENTIALS_PATH'])
+        env['PYTHONIOENCODING'] = 'utf-8'
+        env['PYTHONUTF8'] = '1'
+        env['NO_COLOR'] = '1'
+        env['CLICOLOR'] = '0'
+        env['TERM'] = 'dumb'
+        os.makedirs(os.path.dirname(env['MODELSCOPE_CREDENTIALS_PATH']), exist_ok=True)
+        os.makedirs(env['MODELSCOPE_CACHE'], exist_ok=True)
+        
+        # 执行命令
+        timeout = app.config.get('TASK_TIMEOUT', 3600)
+        try:
+            with open(filepath, 'w', encoding='utf-8') as f:
+                result = subprocess.run(
+                    cmd,
+                    stdout=f,
+                    stderr=subprocess.STDOUT,
+                    text=True,
+                    env=env,
+                    timeout=timeout
+                )
+        except subprocess.TimeoutExpired:
+            app.logger.error(f"Channel {channel_name} test timed out after {timeout}s")
+            raise Exception(f"Test timed out after {timeout}s")
+        
+        # 读取输出并解析性能指标
+        with open(filepath, 'r', encoding='utf-8') as f:
+            output = f.read()
+        
+        # 解析性能指标
+        perf_result = self._parse_perf_output(output)
+        
+        if not perf_result:
+            raise Exception("Failed to parse performance metrics from output")
+        
+        return perf_result

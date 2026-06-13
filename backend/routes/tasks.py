@@ -61,8 +61,8 @@ def create_task():
             return jsonify({'error': f'Missing required field: {field}'}), 400
     
     # 验证任务类型
-    if data['task_type'] not in ['perf_test', 'quality_test']:
-        return jsonify({'error': 'Invalid task_type, must be perf_test or quality_test'}), 400
+    if data['task_type'] not in ['perf_test', 'quality_test', 'availability_test']:
+        return jsonify({'error': 'Invalid task_type, must be perf_test, quality_test or availability_test'}), 400
     
     # 验证配置
     try:
@@ -226,7 +226,16 @@ def get_task_output_content(task_id):
         return jsonify({'content': '', 'exists': False}), 200
     
     # 根据任务类型查找文件
-    prefix = 'perf_' if task.task_type == 'perf_test' else 'quality_'
+    prefix_map = {
+        'perf_test': 'perf_',
+        'quality_test': 'quality_',
+        'availability_test': 'availability_'
+    }
+    prefix = prefix_map.get(task.task_type, '')
+    
+    if not prefix:
+        return jsonify({'content': '', 'exists': False}), 200
+    
     files = sorted(output_dir.glob(f"{prefix}*.txt"), reverse=True)
     
     if not files:
