@@ -98,4 +98,11 @@ export const resultAPI = {
   getStatistics: () => api.get('/results/statistics')
 }
 
+// 对比测试 API
+export const compareAPI = {
+  getTestCases: (params) => api.get('/compare/test-cases', { params }),
+  getTestCategories: () => api.get('/compare/test-cases/categories'),
+  getSystemMetrics: () => api.get('/compare/system-metrics')
+}
+
 export default api

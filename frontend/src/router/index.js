@@ -6,6 +6,8 @@ import Tasks from '@/views/Tasks.vue'
 import PerfResults from '@/views/PerfResults.vue'
 import QualityResults from '@/views/QualityResults.vue'
 import AvailabilityMonitor from '@/views/AvailabilityMonitor.vue'
+import ModelCompare from '@/views/ModelCompare.vue'
+import SystemMonitor from '@/views/SystemMonitor.vue'
 
 const routes = [
   {
@@ -43,6 +45,16 @@ const routes = [
         path: 'availability-monitor',
         name: 'AvailabilityMonitor',
         component: AvailabilityMonitor
+      },
+      {
+        path: 'model-compare',
+        name: 'ModelCompare',
+        component: ModelCompare
+      },
+      {
+        path: 'system-monitor',
+        name: 'SystemMonitor',
+        component: SystemMonitor
       }
     ]
   }

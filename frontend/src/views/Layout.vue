@@ -29,6 +29,12 @@
           <el-menu-item index="/quality-results">质量测试</el-menu-item>
           <el-menu-item index="/availability-monitor">可用性监控</el-menu-item>
         </el-sub-menu>
+        <el-menu-item index="/model-compare">
+          <span>模型对比</span>
+        </el-menu-item>
+        <el-menu-item index="/system-monitor">
+          <span>系统监控</span>
+        </el-menu-item>
       </el-menu>
     </el-aside>
 

@@ -44,10 +44,12 @@ def create_app(config_name='default'):
     from .routes.auth import auth_bp
     from .routes.tasks import tasks_bp
     from .routes.results import results_bp
+    from .routes.compare import compare_bp
     
     app.register_blueprint(auth_bp, url_prefix='/api/auth')
     app.register_blueprint(tasks_bp, url_prefix='/api/tasks')
     app.register_blueprint(results_bp, url_prefix='/api/results')
+    app.register_blueprint(compare_bp, url_prefix='/api/compare')
     
     # 创建数据库表和初始用户
     with app.app_context():
