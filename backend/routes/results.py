@@ -4,7 +4,7 @@
 from flask import Blueprint, request, jsonify, send_file
 from flask_login import login_required
 from datetime import datetime, timezone
-from ..models import db, Task, PerfTestResult, QualityTestResult, AvailabilityTestResult
+from ..models import db, Task, PerfTestResult, QualityTestResult, AvailabilityTestResult, QualityEvalResult
 import json
 import os
 import re
@@ -372,7 +372,7 @@ def get_perf_chart_data():
 @results_bp.route('/quality', methods=['GET'])
 @login_required
 def get_quality_results():
-    """获取模型质量测试结果"""
+    """获取模型安全审计结果"""
     task_id = request.args.get('task_id', type=int)
     start_time = request.args.get('start_time')
     end_time = request.args.get('end_time')
@@ -403,7 +403,7 @@ def get_quality_results():
 @results_bp.route('/quality/<int:result_id>', methods=['GET', 'DELETE'])
 @login_required
 def quality_result_handler(result_id):
-    """获取或删除单个模型质量测试结果"""
+    """获取或删除单个模型安全审计结果"""
     if request.method == 'DELETE':
         result = QualityTestResult.query.get_or_404(result_id)
         if result.output_file and os.path.exists(result.output_file):
@@ -422,7 +422,7 @@ def quality_result_handler(result_id):
 @results_bp.route('/quality/<int:result_id>/file', methods=['GET'])
 @login_required
 def get_quality_result_file(result_id):
-    """获取模型质量测试结果文件"""
+    """获取模型安全审计结果文件"""
     result = QualityTestResult.query.get_or_404(result_id)
     
     if not result.output_file or not os.path.exists(result.output_file):
@@ -434,7 +434,7 @@ def get_quality_result_file(result_id):
 @results_bp.route('/quality/<int:result_id>/raw', methods=['GET'])
 @login_required
 def get_quality_result_raw(result_id):
-    """获取模型质量测试原始报告内容"""
+    """获取模型安全审计原始报告内容"""
     result = QualityTestResult.query.get_or_404(result_id)
     
     report_file = result.report_file or result.output_file
@@ -456,7 +456,7 @@ def get_quality_result_raw(result_id):
 @results_bp.route('/quality/<int:result_id>/html', methods=['GET'])
 @login_required
 def get_quality_result_html(result_id):
-    """获取模型质量测试报告（HTML格式，含解读）"""
+    """获取模型安全审计报告（HTML格式，含解读）"""
     result = QualityTestResult.query.get_or_404(result_id)
     
     report_file = result.report_file or result.output_file
@@ -1017,7 +1017,7 @@ def _full_report_css():
 @results_bp.route('/quality/<int:result_id>/view', methods=['GET'])
 @login_required
 def view_quality_report(result_id):
-    """独立页面查看质量测试报告"""
+    """独立页面查看安全审计报告"""
     result = QualityTestResult.query.get_or_404(result_id)
     report_file = result.report_file or result.output_file
     if not report_file or not os.path.exists(report_file):
@@ -1028,7 +1028,7 @@ def view_quality_report(result_id):
     return f'''<!DOCTYPE html>
 <html lang="zh-CN">
 <head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>质量测试报告</title></head>
+<title>安全审计报告</title></head>
 <body>{body}</body>
 </html>''', 200, {'Content-Type': 'text/html; charset=utf-8'}
 
@@ -1188,3 +1188,295 @@ def get_availability_chart_data():
     }
 
     return jsonify({'chart_data': chart_data}), 200
+
+
+# ==================== 质量评测 API ====================
+
+@results_bp.route('/quality-eval', methods=['GET'])
+@login_required
+def get_quality_eval_results():
+    """获取模型质量评测结果列表"""
+    task_id = request.args.get('task_id', type=int)
+    start_time = request.args.get('start_time')
+    end_time = request.args.get('end_time')
+    limit = request.args.get('limit', 100, type=int)
+
+    query = QualityEvalResult.query
+
+    if task_id:
+        query = query.filter_by(task_id=task_id)
+
+    if start_time:
+        parsed_start = parse_time_param(start_time)
+        if parsed_start:
+            query = query.filter(QualityEvalResult.execution_time >= parsed_start)
+
+    if end_time:
+        parsed_end = parse_time_param(end_time)
+        if parsed_end:
+            query = query.filter(QualityEvalResult.execution_time <= parsed_end)
+
+    results = query.order_by(QualityEvalResult.execution_time.desc()).limit(limit).all()
+
+    return jsonify({
+        'results': [result.to_dict() for result in results]
+    }), 200
+
+
+@results_bp.route('/quality-eval/<int:result_id>', methods=['GET', 'DELETE'])
+@login_required
+def quality_eval_result_handler(result_id):
+    """获取或删除单个质量评测结果"""
+    if request.method == 'DELETE':
+        result = QualityEvalResult.query.get_or_404(result_id)
+        if result.predictions_file and os.path.exists(result.predictions_file):
+            try:
+                os.remove(result.predictions_file)
+            except OSError:
+                pass
+        db.session.delete(result)
+        db.session.commit()
+        return jsonify({'message': 'Result deleted successfully'}), 200
+
+    result = QualityEvalResult.query.get_or_404(result_id)
+    return jsonify({'result': result.to_dict()}), 200
+
+
+@results_bp.route('/quality-eval/<int:result_id>/predictions', methods=['GET'])
+@login_required
+def get_quality_eval_predictions(result_id):
+    """获取质量评测的逐样本预测详情"""
+    import math
+
+    result = QualityEvalResult.query.get_or_404(result_id)
+
+    if not result.predictions_file or not os.path.exists(result.predictions_file):
+        return jsonify({'error': 'Predictions file not found'}), 404
+
+    def _sanitize(obj):
+        """将 NaN 替换为 None，确保输出合法 JSON"""
+        if isinstance(obj, dict):
+            return {k: _sanitize(v) for k, v in obj.items()}
+        if isinstance(obj, list):
+            return [_sanitize(v) for v in obj]
+        if isinstance(obj, float) and math.isnan(obj):
+            return None
+        return obj
+
+    try:
+        predictions = []
+        with open(result.predictions_file, 'r', encoding='utf-8') as f:
+            for line in f:
+                if line.strip():
+                    predictions.append(json.loads(line))
+        return jsonify({'predictions': _sanitize(predictions)}), 200
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@results_bp.route('/quality-eval/<int:result_id>/log', methods=['GET'])
+@login_required
+def get_quality_eval_log(result_id):
+    """获取质量评测的执行日志"""
+    result = QualityEvalResult.query.get_or_404(result_id)
+
+    if not result.log_file or not os.path.exists(result.log_file):
+        return jsonify({'error': 'Log file not found'}), 404
+
+    try:
+        with open(result.log_file, 'r', encoding='utf-8') as f:
+            content = f.read()
+        return jsonify({'log': content}), 200
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@results_bp.route('/quality-eval/<int:result_id>/view', methods=['GET'])
+@login_required
+def view_quality_eval_report(result_id):
+    """独立页面查看质量评测报告"""
+    import math
+
+    result = QualityEvalResult.query.get_or_404(result_id)
+
+    # 解析聚合指标
+    metrics = {}
+    if result.metrics_json:
+        try:
+            metrics = json.loads(result.metrics_json)
+        except Exception:
+            pass
+
+    # 解析逐样本预测
+    predictions = []
+    if result.predictions_file and os.path.exists(result.predictions_file):
+        try:
+            with open(result.predictions_file, 'r', encoding='utf-8') as f:
+                for line in f:
+                    if line.strip():
+                        predictions.append(json.loads(line))
+        except Exception:
+            pass
+
+    # 获取模型名称
+    model_name = ''
+    if result.task and result.task.config:
+        try:
+            config = json.loads(result.task.config)
+            model_name = config.get('model', '')
+        except Exception:
+            pass
+
+    # 指标标签
+    metric_labels = {
+        'exact_match': 'Exact Match',
+        'contains_match': 'Contains Match',
+        'token_f1': 'Token F1',
+        'rouge_l': 'Rouge-L',
+        'llm_judge': 'LLM Judge',
+    }
+
+    # 构建指标汇总行
+    metrics_rows = ''
+    for key, label in metric_labels.items():
+        val = metrics.get(key)
+        if val is not None and not (isinstance(val, float) and math.isnan(val)):
+            if key == 'llm_judge':
+                display = f'{val * 4 + 1:.1f}/5'
+            else:
+                display = f'{val * 100:.1f}%'
+            color = '#67c23a' if val >= 0.8 else ('#e6a23c' if val >= 0.5 else '#f56c6c')
+            metrics_rows += f'<tr><td>{label}</td><td style="color:{color};font-weight:600">{display}</td></tr>'
+
+    # 评价模型评分
+    judge_details = metrics.get('judge_details', {})
+    judge_rows = ''
+    if judge_details:
+        for name, avg_score in judge_details.items():
+            if avg_score is not None and not (isinstance(avg_score, float) and math.isnan(avg_score)):
+                judge_rows += f'<tr><td>{name}</td><td>{avg_score * 4 + 1:.2f}/5</td></tr>'
+
+    judge_section = ''
+    if judge_rows:
+        judge_section = f'''
+        <h3>评价模型评分</h3>
+        <table class="data-table"><tr><th>评价模型</th><th>平均分</th></tr>{judge_rows}</table>'''
+
+    # 逐样本详情
+    sample_rows = ''
+    for i, pred in enumerate(predictions):
+        scores = pred.get('scores', {})
+        prompt = pred.get('prompt', '').replace('<', '&lt;').replace('>', '&gt;')
+        reference = pred.get('reference', '').replace('<', '&lt;').replace('>', '&gt;')
+        prediction_text = pred.get('prediction', '').replace('<', '&lt;').replace('>', '&gt;')
+        sample_id = pred.get('sample_id', str(i + 1))
+
+        def fmt(val, is_judge=False):
+            if val is None or (isinstance(val, float) and math.isnan(val)):
+                return '-'
+            if is_judge:
+                return f'{val * 4 + 1:.1f}/5'
+            return f'{val * 100:.1f}%'
+
+        em = fmt(scores.get('exact_match'))
+        cm = fmt(scores.get('contains_match'))
+        tf = fmt(scores.get('token_f1'))
+        rl = fmt(scores.get('rouge_l'))
+        lj = fmt(scores.get('llm_judge'), True)
+
+        jd = scores.get('judge_details', {})
+        jd_tags = ''
+        if jd:
+            for jname, jscore in jd.items():
+                if jscore is not None and not (isinstance(jscore, float) and math.isnan(jscore)):
+                    jd_tags += f'<span class="jd-tag">{jname}: {jscore * 4 + 1:.1f}</span>'
+
+        sample_rows += f'''
+        <tr>
+          <td>{sample_id}</td>
+          <td>{em}</td>
+          <td>{cm}</td>
+          <td>{tf}</td>
+          <td>{rl}</td>
+          <td>{lj}</td>
+          <td>{jd_tags}</td>
+          <td class="detail-cell" onclick="toggleDetail({i})"><span class="toggle-link">展开</span></td>
+        </tr>
+        <tr id="detail-{i}" class="detail-row" style="display:none">
+          <td colspan="8">
+            <div class="detail-content">
+              <p><b>输入：</b>{prompt}</p>
+              <p><b>参考答案：</b>{reference}</p>
+              <p><b>模型输出：</b>{prediction_text}</p>
+            </div>
+          </td>
+        </tr>'''
+
+    exec_time = result.execution_time.strftime('%Y-%m-%d %H:%M') if result.execution_time else '-'
+
+    html = f'''<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>质量评测报告</title>
+<style>
+  body {{ font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; margin: 0; padding: 20px; background: #f5f7fa; color: #303133; }}
+  .container {{ max-width: 1200px; margin: 0 auto; }}
+  h1 {{ text-align: center; color: #303133; margin-bottom: 24px; }}
+  h3 {{ color: #303133; margin: 20px 0 8px; }}
+  .info-bar {{ display: flex; gap: 32px; background: #fff; padding: 16px 24px; border-radius: 8px; margin-bottom: 20px; box-shadow: 0 1px 4px rgba(0,0,0,.08); }}
+  .info-bar .item {{ font-size: 14px; }}
+  .info-bar .label {{ color: #909399; }}
+  .info-bar .value {{ color: #303133; font-weight: 600; margin-left: 8px; }}
+  .data-table {{ width: auto; border-collapse: collapse; background: #fff; border-radius: 8px; overflow: hidden; box-shadow: 0 1px 4px rgba(0,0,0,.08); margin-bottom: 20px; }}
+  .data-table th, .data-table td {{ padding: 10px 16px; text-align: left; border-bottom: 1px solid #ebeef5; font-size: 14px; }}
+  .data-table th {{ background: #f5f7fa; color: #909399; font-weight: 600; }}
+  .sample-table {{ width: 100%; border-collapse: collapse; background: #fff; border-radius: 8px; overflow: hidden; box-shadow: 0 1px 4px rgba(0,0,0,.08); }}
+  .sample-table th, .sample-table td {{ padding: 8px 12px; text-align: left; border-bottom: 1px solid #ebeef5; font-size: 13px; }}
+  .sample-table th {{ background: #f5f7fa; color: #909399; font-weight: 600; white-space: nowrap; }}
+  .detail-cell {{ cursor: pointer; }}
+  .toggle-link {{ color: #409eff; text-decoration: underline; }}
+  .detail-row td {{ padding: 0 !important; }}
+  .detail-content {{ padding: 12px 16px; background: #fafafa; line-height: 1.8; }}
+  .detail-content p {{ margin: 4px 0; }}
+  .jd-tag {{ display: inline-block; background: #ecf5ff; color: #409eff; padding: 2px 8px; border-radius: 4px; font-size: 12px; margin-right: 4px; margin-bottom: 2px; }}
+</style>
+</head>
+<body>
+<div class="container">
+  <h1>质量评测报告</h1>
+  <div class="info-bar">
+    <div class="item"><span class="label">模型：</span><span class="value">{model_name or '-'}</span></div>
+    <div class="item"><span class="label">数据集：</span><span class="value">{result.dataset_path or '-'}</span></div>
+    <div class="item"><span class="label">样本数：</span><span class="value">{result.sample_count or '-'}</span></div>
+    <div class="item"><span class="label">执行时间：</span><span class="value">{exec_time}</span></div>
+  </div>
+
+  <h3>指标汇总</h3>
+  <table class="data-table"><tr><th>指标</th><th>得分</th></tr>{metrics_rows}</table>
+
+  {judge_section}
+
+  <h3>逐样本详情</h3>
+  <table class="sample-table">
+    <tr><th>ID</th><th>Exact</th><th>Contains</th><th>Token F1</th><th>Rouge-L</th><th>LLM Judge</th><th>Judge 详情</th><th>详情</th></tr>
+    {sample_rows}
+  </table>
+</div>
+<script>
+function toggleDetail(i) {{
+  var row = document.getElementById('detail-' + i);
+  var link = row.previousElementSibling.querySelector('.toggle-link');
+  if (row.style.display === 'none') {{
+    row.style.display = 'table-row';
+    link.textContent = '收起';
+  }} else {{
+    row.style.display = 'none';
+    link.textContent = '展开';
+  }}
+}}
+</script>
+</body>
+</html>'''
+
+    return html, 200, {'Content-Type': 'text/html; charset=utf-8'}

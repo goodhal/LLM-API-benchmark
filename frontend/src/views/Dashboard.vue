@@ -98,7 +98,7 @@
       <el-col :span="12">
         <el-card>
           <template #header>
-            <span>最近质量测试结果</span>
+            <span>最近安全审计结果</span>
           </template>
           <el-table :data="recentQualityResults" style="width: 100%">
             <el-table-column prop="execution_time" label="执行时间" min-width="140">

@@ -1,0 +1,10 @@
+{"id":"math-1","prompt":"12 + 30 = ?","answer":"42","metadata":{"domain":"math","lang":"zh"}}
+{"id":"math-2","prompt":"100除以4等于多少？","answer":"25","metadata":{"domain":"math","lang":"zh"}}
+{"id":"math-3","prompt":"7乘以8等于几？","answer":"56","metadata":{"domain":"math","lang":"zh"}}
+{"id":"math-4","prompt":"15的平方是多少？","answer":"225","metadata":{"domain":"math","lang":"zh"}}
+{"id":"math-5","prompt":"144的平方根是多少？","answer":"12","metadata":{"domain":"math","lang":"zh"}}
+{"id":"math-6","prompt":"3的5次方等于多少？","answer":"243","metadata":{"domain":"math","lang":"zh"}}
+{"id":"math-7","prompt":"1公里等于多少米？","answer":"1000","metadata":{"domain":"math","lang":"zh"}}
+{"id":"math-8","prompt":"一个圆的面积公式是什么？","answer":"πr²","metadata":{"domain":"math","lang":"zh"}}
+{"id":"math-9","prompt":"2的10次方等于多少？","answer":"1024","metadata":{"domain":"math","lang":"zh"}}
+{"id":"math-10","prompt":"1小时等于多少秒？","answer":"3600","metadata":{"domain":"math","lang":"zh"}}

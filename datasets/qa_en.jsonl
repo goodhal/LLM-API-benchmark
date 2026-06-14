@@ -1,0 +1,10 @@
+{"id":"qa-1","prompt":"What is the capital of France?","answer":"Paris","metadata":{"domain":"geography","lang":"en"}}
+{"id":"qa-2","prompt":"Which planet is known as the Red Planet?","answer":"Mars","metadata":{"domain":"science","lang":"en"}}
+{"id":"qa-3","prompt":"Who wrote Hamlet?","answer":"William Shakespeare","metadata":{"domain":"literature","lang":"en"}}
+{"id":"qa-4","prompt":"What is the largest ocean on Earth?","answer":"Pacific Ocean","metadata":{"domain":"geography","lang":"en"}}
+{"id":"qa-5","prompt":"What is the chemical symbol for gold?","answer":"Au","metadata":{"domain":"science","lang":"en"}}
+{"id":"qa-6","prompt":"In which year did World War II end?","answer":"1945","metadata":{"domain":"history","lang":"en"}}
+{"id":"qa-7","prompt":"What is the speed of light in vacuum (approx km/s)?","answer":"300000","metadata":{"domain":"science","lang":"en"}}
+{"id":"qa-8","prompt":"Who painted the Mona Lisa?","answer":"Leonardo da Vinci","metadata":{"domain":"art","lang":"en"}}
+{"id":"qa-9","prompt":"What is the capital of Japan?","answer":"Tokyo","metadata":{"domain":"geography","lang":"en"}}
+{"id":"qa-10","prompt":"What gas do plants absorb from the atmosphere?","answer":"Carbon dioxide","metadata":{"domain":"science","lang":"en"}}

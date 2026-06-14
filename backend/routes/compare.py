@@ -200,6 +200,35 @@ def get_test_categories():
     return jsonify({'categories': sorted(categories)}), 200
 
 
+@compare_bp.route('/dataset-prompts', methods=['GET'])
+@login_required
+def get_dataset_prompts():
+    """从数据集加载 prompt 列表，供模型对比使用"""
+    from ..data.loaders import DatasetLoader
+
+    dataset_path = request.args.get('path', '')
+    input_column = request.args.get('input_column', 'prompt')
+    answer_column = request.args.get('answer_column', 'answer')
+    limit = request.args.get('limit', 20, type=int)
+
+    if not dataset_path:
+        return jsonify({'error': '请指定数据集路径'}), 400
+
+    try:
+        loader = DatasetLoader()
+        samples = loader.load(dataset_path, input_column=input_column,
+                              answer_column=answer_column, limit=limit)
+        prompts = []
+        for i, s in enumerate(samples):
+            item = {'id': f'ds-{i}', 'prompt': s.prompt, 'category': '数据集'}
+            if s.answer:
+                item['expected'] = s.answer
+            prompts.append(item)
+        return jsonify({'prompts': prompts}), 200
+    except Exception as e:
+        return jsonify({'error': f'加载数据集失败: {str(e)}'}), 400
+
+
 @compare_bp.route('/run', methods=['POST'])
 @login_required
 def run_compare():

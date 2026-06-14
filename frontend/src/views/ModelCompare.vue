@@ -41,6 +41,20 @@
                 </el-option>
               </el-option-group>
             </el-select>
+            <el-select
+              v-model="selectedDataset"
+              placeholder="从数据集选择"
+              clearable
+              style="margin-top: 8px"
+              @change="onDatasetChange"
+            >
+              <el-option
+                v-for="ds in datasetList"
+                :key="ds.path"
+                :label="`${ds.name} (${ds.format})`"
+                :value="ds.path"
+              />
+            </el-select>
           </div>
         </div>
 
@@ -188,9 +202,13 @@ import { ref, onMounted, nextTick } from 'vue'
 import { ElMessage } from 'element-plus'
 import { Plus, Close, Loading, CircleCloseFilled, WarningFilled, InfoFilled } from '@element-plus/icons-vue'
 import api from '@/utils/api'
+import { taskAPI } from '@/utils/api'
 
 const testPrompt = ref('')
 const selectedTestCase = ref('')
+const selectedDataset = ref('')
+const datasetList = ref([])
+const datasetPrompts = ref([])
 const testCases = ref([])
 const categories = ref([])
 const currentTestCase = ref(null)
@@ -213,7 +231,17 @@ const outputAreas = ref([])
 
 onMounted(async () => {
   await loadTestCases()
+  loadDatasets()
 })
+
+async function loadDatasets() {
+  try {
+    const res = await taskAPI.getDatasets()
+    datasetList.value = res.datasets || []
+  } catch (e) {
+    console.error('加载数据集列表失败:', e)
+  }
+}
 
 async function loadTestCases() {
   try {
@@ -241,6 +269,30 @@ function onTestCaseChange(id) {
   if (tc) {
     testPrompt.value = tc.prompt
     currentTestCase.value = tc
+    selectedDataset.value = ''
+  }
+}
+
+async function onDatasetChange(path) {
+  if (!path) {
+    datasetPrompts.value = []
+    return
+  }
+  try {
+    const res = await api.get('/compare/dataset-prompts', { params: { path } })
+    const prompts = res.prompts || []
+    if (prompts.length === 0) {
+      ElMessage.warning('数据集为空')
+      return
+    }
+    datasetPrompts.value = prompts
+    // 默认填入第一条
+    testPrompt.value = prompts[0].prompt
+    selectedTestCase.value = ''
+    currentTestCase.value = null
+    ElMessage.success(`已加载数据集，共 ${prompts.length} 条`)
+  } catch (e) {
+    ElMessage.error('加载数据集失败: ' + (e.response?.data?.error || e.message))
   }
 }
 
@@ -287,6 +339,8 @@ function clearAll() {
   modelCards.value = []
   testPrompt.value = ''
   selectedTestCase.value = ''
+  selectedDataset.value = ''
+  datasetPrompts.value = []
   currentTestCase.value = null
 }
 

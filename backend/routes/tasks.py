@@ -4,6 +4,7 @@
 from flask import Blueprint, request, jsonify
 from flask_login import login_required
 from datetime import datetime
+from pathlib import Path
 import json
 from ..models import db, Task
 from ..executor import TaskExecutor
@@ -12,6 +13,24 @@ from .. import scheduler
 
 tasks_bp = Blueprint('tasks', __name__)
 executor = TaskExecutor()
+
+
+@tasks_bp.route('/datasets', methods=['GET'])
+@login_required
+def list_datasets():
+    """列出可用的数据集文件"""
+    datasets_dir = Path('datasets')
+    datasets = []
+    if datasets_dir.exists():
+        for f in sorted(datasets_dir.iterdir()):
+            if f.suffix in ('.jsonl', '.csv'):
+                datasets.append({
+                    'name': f.stem,
+                    'path': str(f),
+                    'format': f.suffix.lstrip('.'),
+                    'size': f.stat().st_size
+                })
+    return jsonify({'datasets': datasets}), 200
 
 
 @tasks_bp.route('/', methods=['GET'])
@@ -61,8 +80,8 @@ def create_task():
             return jsonify({'error': f'Missing required field: {field}'}), 400
     
     # 验证任务类型
-    if data['task_type'] not in ['perf_test', 'quality_test', 'availability_test']:
-        return jsonify({'error': 'Invalid task_type, must be perf_test, quality_test or availability_test'}), 400
+    if data['task_type'] not in ['perf_test', 'quality_test', 'quality_eval', 'availability_test']:
+        return jsonify({'error': 'Invalid task_type, must be perf_test, quality_test, quality_eval or availability_test'}), 400
     
     # 验证配置
     try:
@@ -228,7 +247,8 @@ def get_task_output_content(task_id):
     # 根据任务类型查找文件
     prefix_map = {
         'perf_test': 'perf_',
-        'quality_test': 'quality_',
+        'safety_audit': 'safety_',
+        'quality_eval': 'quality_eval_',
         'availability_test': 'availability_'
     }
     prefix = prefix_map.get(task.task_type, '')

@@ -72,7 +72,8 @@ export const taskAPI = {
   deleteTask: (id) => api.delete(`/tasks/${id}`),
   runTask: (id) => api.post(`/tasks/${id}/run`),
   stopTask: (id) => api.post(`/tasks/${id}/stop`),
-  getLiveMetrics: (id) => api.get(`/tasks/${id}/live-metrics`)
+  getLiveMetrics: (id) => api.get(`/tasks/${id}/live-metrics`),
+  getDatasets: () => api.get('/tasks/datasets')
 }
 
 // 结果 API
@@ -91,7 +92,12 @@ export const resultAPI = {
   getQualityResultRaw: (id) => api.get(`/results/quality/${id}/raw`),
   getQualityResultHtml: (id) => api.get(`/results/quality/${id}/html`),
   deleteQualityResult: (id) => api.delete(`/results/quality/${id}`),
-  
+
+  getQualityEvalResults: (params) => api.get('/results/quality-eval', { params }),
+  getQualityEvalResult: (id) => api.get(`/results/quality-eval/${id}`),
+  getQualityEvalPredictions: (id) => api.get(`/results/quality-eval/${id}/predictions`),
+  deleteQualityEvalResult: (id) => api.delete(`/results/quality-eval/${id}`),
+
   getAvailabilityResults: (params) => api.get('/results/availability', { params }),
   getAvailabilityModels: () => api.get('/results/availability/models'),
   getAvailabilityChartData: (params) => api.get('/results/availability/chart-data', { params }),
@@ -104,6 +110,20 @@ export const compareAPI = {
   getTestCases: (params) => api.get('/compare/test-cases', { params }),
   getTestCategories: () => api.get('/compare/test-cases/categories'),
   getSystemMetrics: () => api.get('/compare/system-metrics')
+}
+
+// 评价模型 API
+export const judgeAPI = {
+  getJudgeModels: () => api.get('/judge/'),
+  getJudgeModel: (id) => api.get(`/judge/${id}`),
+  createJudgeModel: (data) => api.post('/judge/', data),
+  updateJudgeModel: (id, data) => api.put(`/judge/${id}`, data),
+  deleteJudgeModel: (id) => api.delete(`/judge/${id}`)
+}
+
+// 评测日志 API
+export const logAPI = {
+  getQualityEvalLog: (resultId) => api.get(`/results/quality-eval/${resultId}/log`),
 }
 
 export default api

@@ -42,7 +42,7 @@ class Task(db.Model):
     
     id = db.Column(db.Integer, primary_key=True)
     name = db.Column(db.String(200), nullable=False)
-    task_type = db.Column(db.String(50), nullable=False)  # 'perf_test' or 'quality_test'
+    task_type = db.Column(db.String(50), nullable=False)  # 'perf_test', 'safety_audit', 'quality_eval', 'availability_test'
     
     # 任务配置（JSON 格式）
     config = db.Column(db.Text, nullable=False)
@@ -72,6 +72,8 @@ class Task(db.Model):
                                       cascade='all, delete-orphan')
     availability_results = db.relationship('AvailabilityTestResult', backref='task', lazy='dynamic',
                                           cascade='all, delete-orphan')
+    quality_eval_results = db.relationship('QualityEvalResult', backref='task', lazy='dynamic',
+                                           cascade='all, delete-orphan')
     
     def to_dict(self):
         return {
@@ -277,4 +279,91 @@ class AvailabilityTestResult(db.Model):
             'status': self.status,
             'error_message': self.error_message,
             'created_at': self.created_at.isoformat()
+        }
+
+
+class QualityEvalResult(db.Model):
+    """模型质量评测结果表（基于数据集的自动评分）"""
+    __tablename__ = 'quality_eval_results'
+
+    id = db.Column(db.Integer, primary_key=True)
+    task_id = db.Column(db.Integer, db.ForeignKey('tasks.id'), nullable=False)
+
+    # 执行信息
+    execution_time = db.Column(db.DateTime, nullable=False)
+
+    # 聚合指标（JSON，如 {"exact_match": 0.5, "token_f1": 0.65}）
+    metrics_json = db.Column(db.Text)
+
+    # 逐样本详情文件路径（JSONL）
+    predictions_file = db.Column(db.String(500))
+
+    # 日志文件路径
+    log_file = db.Column(db.String(500))
+
+    # 数据集信息
+    dataset_path = db.Column(db.String(500))
+    sample_count = db.Column(db.Integer)
+
+    # 状态
+    status = db.Column(db.String(20), default='success')
+    error_message = db.Column(db.Text)
+
+    created_at = db.Column(db.DateTime, default=datetime.now)
+
+    def to_dict(self):
+        import json as _json
+        task_name = self.task.name if self.task else None
+        model_name = None
+        if self.task and self.task.config:
+            try:
+                config = _json.loads(self.task.config)
+                model_name = config.get('model')
+            except Exception:
+                pass
+        metrics = {}
+        if self.metrics_json:
+            try:
+                metrics = _json.loads(self.metrics_json)
+            except Exception:
+                pass
+        return {
+            'id': self.id,
+            'task_id': self.task_id,
+            'task_name': task_name,
+            'model_name': model_name,
+            'execution_time': self.execution_time.isoformat(),
+            'metrics': metrics,
+            'predictions_file': self.predictions_file,
+            'log_file': self.log_file,
+            'dataset_path': self.dataset_path,
+            'sample_count': self.sample_count,
+            'status': self.status,
+            'error_message': self.error_message,
+            'created_at': self.created_at.isoformat()
+        }
+
+
+class JudgeModel(db.Model):
+    """评价模型配置表（全局配置，可被多个任务引用）"""
+    __tablename__ = 'judge_models'
+
+    id = db.Column(db.Integer, primary_key=True)
+    name = db.Column(db.String(200), nullable=False)  # 显示名称，如 "GPT-4 Judge"
+    url = db.Column(db.String(500), nullable=False)  # API URL
+    api_key = db.Column(db.String(500), nullable=False)  # API Key
+    model = db.Column(db.String(200), nullable=False)  # 模型名称，如 "gpt-4"
+
+    created_at = db.Column(db.DateTime, default=datetime.now)
+    updated_at = db.Column(db.DateTime, default=datetime.now, onupdate=datetime.now)
+
+    def to_dict(self):
+        return {
+            'id': self.id,
+            'name': self.name,
+            'url': self.url,
+            'api_key': '******',  # 不暴露完整 key
+            'model': self.model,
+            'created_at': self.created_at.isoformat(),
+            'updated_at': self.updated_at.isoformat()
         }

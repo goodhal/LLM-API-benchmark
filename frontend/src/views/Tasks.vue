@@ -110,7 +110,8 @@
         <el-form-item label="任务类型" prop="task_type">
           <el-radio-group v-model="taskForm.task_type" :disabled="isEdit">
             <el-radio label="perf_test">服务压力测试</el-radio>
-            <el-radio label="quality_test">模型质量测试</el-radio>
+            <el-radio label="safety_audit">安全审计</el-radio>
+            <el-radio label="quality_eval">模型质量评测</el-radio>
             <el-radio label="availability_test">服务可用性测试</el-radio>
           </el-radio-group>
         </el-form-item>
@@ -172,7 +173,7 @@
           </el-form-item>
         </template>
         
-        <!-- 质量测试配置 -->
+        <!-- 安全审计配置 -->
         <template v-if="taskForm.task_type === 'quality_test'">
           <el-form-item label="API URL" prop="config.url">
             <el-input v-model="taskForm.config.url" placeholder="https://relay.example.com/v1" />
@@ -184,6 +185,92 @@
           
           <el-form-item label="模型名称" prop="config.model">
             <el-input v-model="taskForm.config.model" placeholder="claude-opus-4-6" />
+          </el-form-item>
+        </template>
+
+        <!-- 模型质量评测配置 -->
+        <template v-if="taskForm.task_type === 'quality_eval'">
+          <el-form-item label="API URL" prop="config.url">
+            <el-input v-model="taskForm.config.url" placeholder="https://api.example.com/v1/chat/completions" />
+          </el-form-item>
+
+          <el-form-item label="API Key" prop="config.api_key">
+            <el-input v-model="taskForm.config.api_key" type="password" placeholder="sk-xxxx" />
+          </el-form-item>
+
+          <el-form-item label="模型名称" prop="config.model">
+            <el-input v-model="taskForm.config.model" placeholder="gpt-3.5-turbo" />
+          </el-form-item>
+
+          <el-divider>数据集配置</el-divider>
+
+          <el-form-item label="数据集" prop="config.dataset_path">
+            <el-select v-model="taskForm.config.dataset_path" placeholder="选择数据集" allow-create filterable>
+              <el-option
+                v-for="ds in datasetList"
+                :key="ds.path"
+                :label="`${ds.name} (${ds.format})`"
+                :value="ds.path"
+              />
+            </el-select>
+            <div class="form-tip">可选择已有数据集，或输入服务器上的 JSONL/CSV 文件路径</div>
+          </el-form-item>
+
+          <el-form-item label="输入列名">
+            <el-input v-model="taskForm.config.input_column" placeholder="prompt" />
+          </el-form-item>
+
+          <el-form-item label="答案列名">
+            <el-input v-model="taskForm.config.answer_column" placeholder="answer" />
+          </el-form-item>
+
+          <el-form-item label="样本数量限制">
+            <el-input-number v-model="taskForm.config.limit" :min="1" :max="100000" />
+            <div class="form-tip">留空则使用全部样本</div>
+          </el-form-item>
+
+          <el-divider>评测配置</el-divider>
+
+          <el-form-item label="评测指标">
+            <el-checkbox-group v-model="taskForm.config.metrics">
+              <el-checkbox label="exact_match">Exact Match</el-checkbox>
+              <el-checkbox label="contains_match">Contains Match</el-checkbox>
+              <el-checkbox label="token_f1">Token F1</el-checkbox>
+              <el-checkbox label="rouge_l">Rouge-L</el-checkbox>
+              <el-checkbox label="llm_judge" :disabled="!taskForm.config.judge_model_ids || taskForm.config.judge_model_ids.length === 0">LLM Judge</el-checkbox>
+            </el-checkbox-group>
+            <div class="form-tip">Contains Match 适用于短答案QA/数学数据集；LLM Judge 需配置评价模型后自动启用</div>
+          </el-form-item>
+
+          <el-divider>评价模型</el-divider>
+
+          <el-form-item label="评价模型">
+            <div style="display: flex; gap: 8px; width: 100%;">
+              <el-select
+                v-model="taskForm.config.judge_model_ids"
+                multiple
+                placeholder="选择评价模型（可选）"
+                style="flex: 1"
+              >
+                <el-option
+                  v-for="jm in judgeModelList"
+                  :key="jm.id"
+                  :label="`${jm.name} (${jm.model})`"
+                  :value="jm.id"
+                />
+              </el-select>
+              <el-button @click="showJudgeModelDialog" type="primary" plain>管理</el-button>
+            </div>
+            <div class="form-tip">不配置评价模型则仅使用文本匹配指标；配置后自动启用 LLM Judge 指标，多个评价模型评分取平均值</div>
+          </el-form-item>
+
+          <el-form-item label="最大生成Token数">
+            <el-input-number v-model="taskForm.config.max_tokens" :min="1" :max="32000" />
+          </el-form-item>
+
+          <el-form-item label="简洁回答">
+            <el-switch v-model="taskForm.config.concise_mode" />
+            <div class="form-tip">开启后会提示被测模型尽量简短回答，提高文本匹配指标的准确性</div>
           </el-form-item>
         </template>
 
@@ -369,13 +456,53 @@
         <el-button type="primary" @click="logDialogVisible = false">关闭</el-button>
       </template>
     </el-dialog>
+
+    <!-- 评价模型管理弹窗 -->
+    <el-dialog v-model="judgeModelDialogVisible" title="评价模型管理" width="700px">
+      <div style="margin-bottom: 16px;">
+        <el-button type="primary" @click="addJudgeModel">添加评价模型</el-button>
+      </div>
+      <el-table :data="judgeModelList" border style="width: 100%">
+        <el-table-column prop="name" label="名称" width="140" />
+        <el-table-column prop="model" label="模型" width="160" />
+        <el-table-column prop="url" label="API URL" show-overflow-tooltip />
+        <el-table-column label="操作" width="140">
+          <template #default="{ row }">
+            <el-button link type="primary" @click="editJudgeModel(row)">编辑</el-button>
+            <el-button link type="danger" @click="deleteJudgeModel(row)">删除</el-button>
+          </template>
+        </el-table-column>
+      </el-table>
+    </el-dialog>
+
+    <!-- 评价模型编辑弹窗 -->
+    <el-dialog v-model="judgeModelEditVisible" :title="judgeModelEditId ? '编辑评价模型' : '添加评价模型'" width="500px">
+      <el-form :model="judgeModelForm" label-width="100px">
+        <el-form-item label="名称">
+          <el-input v-model="judgeModelForm.name" placeholder="如：GPT-4 Judge" />
+        </el-form-item>
+        <el-form-item label="API URL">
+          <el-input v-model="judgeModelForm.url" placeholder="https://api.example.com/v1/chat/completions" />
+        </el-form-item>
+        <el-form-item label="API Key">
+          <el-input v-model="judgeModelForm.api_key" type="password" placeholder="sk-xxxx" />
+        </el-form-item>
+        <el-form-item label="模型名称">
+          <el-input v-model="judgeModelForm.model" placeholder="gpt-4" />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="judgeModelEditVisible = false">取消</el-button>
+        <el-button type="primary" @click="saveJudgeModel" :loading="judgeModelSaving">保存</el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
 <script setup>
-import { ref, reactive, onMounted, nextTick } from 'vue'
+import { ref, reactive, onMounted, nextTick, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { taskAPI } from '@/utils/api'
+import { taskAPI, judgeAPI } from '@/utils/api'
 import dayjs from 'dayjs'
 import utc from 'dayjs/plugin/utc'
 import timezone from 'dayjs/plugin/timezone'
@@ -385,6 +512,7 @@ dayjs.extend(utc)
 dayjs.extend(timezone)
 
 const tasks = ref([])
+const datasetList = ref([])
 const dialogVisible = ref(false)
 const isEdit = ref(false)
 const submitting = ref(false)
@@ -399,6 +527,7 @@ const logContentRef = ref(null)
 const currentLogTask = ref(null)
 const autoScroll = ref(true)
 let logRefreshTimer = null
+const isEditing = ref(false)
 
 const taskForm = reactive({
   name: '',
@@ -418,7 +547,11 @@ const taskForm = reactive({
     engine: 'evalscope',
     channels: [
       { name: '渠道1', url: '', api_key: '', showPassword: false }
-    ]
+    ],
+    dataset_path: '',
+    input_column: 'prompt',
+    answer_column: 'answer',
+    limit: null
   },
   schedule_type: 'manual',
   cron_expression: '',
@@ -428,11 +561,40 @@ const taskForm = reactive({
   is_enabled: false
 })
 
+// 切换任务类型时重置 config，避免残留旧字段（编辑时跳过）
+watch(() => taskForm.task_type, (newType) => {
+  if (isEditing.value) return
+  const commonConfig = {
+    url: taskForm.config.url,
+    api_key: taskForm.config.api_key,
+    model: taskForm.config.model,
+  }
+  const typeSpecific = {
+    perf_test: {
+      ...commonConfig,
+      parallel: 8, number: 50, min_prompt_length: 10, max_prompt_length: 20,
+      min_tokens: 128, max_tokens: 128, connect_timeout: 60, read_timeout: 120,
+      engine: 'evalscope',
+      channels: [{ name: '渠道1', url: '', api_key: '', showPassword: false }]
+    },
+    safety_audit: { ...commonConfig, test_cases: [] },
+    quality_eval: {
+      ...commonConfig,
+      dataset_path: '', input_column: 'prompt', answer_column: 'answer',
+      metrics: ['exact_match', 'contains_match', 'token_f1', 'rouge_l'],
+      max_tokens: 1024, limit: null, judge_model_ids: [], concise_mode: true
+    },
+    availability_test: { ...commonConfig, check_interval: 60, timeout: 30 }
+  }
+  Object.assign(taskForm.config, typeSpecific[newType] || commonConfig)
+})
+
 const rules = {
   name: [{ required: true, message: '请输入任务名称', trigger: 'blur' }],
   task_type: [{ required: true, message: '请选择任务类型', trigger: 'change' }],
   'config.url': [{ required: true, message: '请输入 API URL', trigger: 'blur' }],
-  'config.api_key': [{ required: true, message: '请输入 API Key', trigger: 'blur' }]
+  'config.api_key': [{ required: true, message: '请输入 API Key', trigger: 'blur' }],
+  'config.dataset_path': [{ required: true, message: '请选择数据集', trigger: 'change' }]
 }
 
 const loadTasks = async () => {
@@ -441,6 +603,88 @@ const loadTasks = async () => {
     tasks.value = res.tasks
   } catch (error) {
     console.error('Failed to load tasks:', error)
+  }
+}
+
+// 评价模型相关
+const judgeModelList = ref([])
+const judgeModelDialogVisible = ref(false)
+const judgeModelEditVisible = ref(false)
+const judgeModelEditId = ref(null)
+const judgeModelSaving = ref(false)
+const judgeModelForm = reactive({
+  name: '',
+  url: '',
+  api_key: '',
+  model: ''
+})
+
+const loadJudgeModels = async () => {
+  try {
+    const res = await judgeAPI.getJudgeModels()
+    judgeModelList.value = res.judge_models || []
+  } catch (error) {
+    console.error('Failed to load judge models:', error)
+  }
+}
+
+const showJudgeModelDialog = () => {
+  judgeModelDialogVisible.value = true
+}
+
+const addJudgeModel = () => {
+  judgeModelEditId.value = null
+  Object.assign(judgeModelForm, { name: '', url: '', api_key: '', model: '' })
+  judgeModelEditVisible.value = true
+}
+
+const editJudgeModel = (row) => {
+  judgeModelEditId.value = row.id
+  Object.assign(judgeModelForm, { name: row.name, url: row.url, api_key: '******', model: row.model })
+  judgeModelEditVisible.value = true
+}
+
+const saveJudgeModel = async () => {
+  if (!judgeModelForm.name || !judgeModelForm.url || !judgeModelForm.model) {
+    ElMessage.warning('请填写名称、API URL 和模型名称')
+    return
+  }
+  judgeModelSaving.value = true
+  try {
+    const data = { ...judgeModelForm }
+    if (judgeModelEditId.value) {
+      await judgeAPI.updateJudgeModel(judgeModelEditId.value, data)
+      ElMessage.success('更新成功')
+    } else {
+      if (!data.api_key) {
+        ElMessage.warning('请填写 API Key')
+        judgeModelSaving.value = false
+        return
+      }
+      await judgeAPI.createJudgeModel(data)
+      ElMessage.success('添加成功')
+    }
+    judgeModelEditVisible.value = false
+    await loadJudgeModels()
+  } catch (error) {
+    ElMessage.error('保存失败')
+  } finally {
+    judgeModelSaving.value = false
+  }
+}
+
+const deleteJudgeModel = async (row) => {
+  try {
+    await ElMessageBox.confirm(`确定删除评价模型 "${row.name}"？`, '提示', { type: 'warning' })
+    await judgeAPI.deleteJudgeModel(row.id)
+    ElMessage.success('删除成功')
+    await loadJudgeModels()
+    // 从已选列表中移除
+    if (taskForm.config.judge_model_ids) {
+      taskForm.config.judge_model_ids = taskForm.config.judge_model_ids.filter(id => id !== row.id)
+    }
+  } catch (error) {
+    if (error !== 'cancel') ElMessage.error('删除失败')
   }
 }
 
@@ -453,6 +697,7 @@ const showCreateDialog = () => {
 const handleEdit = (row) => {
   isEdit.value = true
   editingTaskId.value = row.id
+  isEditing.value = true
   
   const parsedConfig = JSON.parse(row.config)
   
@@ -483,6 +728,9 @@ const handleEdit = (row) => {
     end_time: row.end_time ? new Date(row.end_time) : null,
     is_enabled: row.is_enabled
   })
+
+  // 在下一个 tick 解除编辑标志，让 watch 恢复正常
+  nextTick(() => { isEditing.value = false })
   
   dialogVisible.value = true
 }
@@ -722,7 +970,8 @@ const getModelName = (row) => {
 const getTaskTypeLabel = (type) => {
   const labels = {
     perf_test: '压力测试',
-    quality_test: '质量测试',
+    safety_audit: '安全审计',
+    quality_eval: '质量评测',
     availability_test: '可用性测试'
   }
   return labels[type] || type
@@ -732,6 +981,7 @@ const getTaskTypeColor = (type) => {
   const colors = {
     perf_test: 'success',
     quality_test: 'warning',
+    quality_eval: 'danger',
     availability_test: 'primary'
   }
   return colors[type] || 'info'
@@ -754,7 +1004,18 @@ const removeChannel = (index) => {
 
 onMounted(() => {
   loadTasks()
+  loadDatasets()
+  loadJudgeModels()
 })
+
+async function loadDatasets() {
+  try {
+    const res = await taskAPI.getDatasets()
+    datasetList.value = res.datasets || []
+  } catch (e) {
+    console.error('加载数据集列表失败:', e)
+  }
+}
 </script>
 
 <style scoped>

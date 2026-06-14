@@ -26,7 +26,8 @@
             <span>测试报告</span>
           </template>
           <el-menu-item index="/perf-results">压力测试</el-menu-item>
-          <el-menu-item index="/quality-results">质量测试</el-menu-item>
+          <el-menu-item index="/quality-results">安全审计</el-menu-item>
+          <el-menu-item index="/quality-eval-results">质量评测</el-menu-item>
           <el-menu-item index="/availability-monitor">可用性监控</el-menu-item>
         </el-sub-menu>
         <el-menu-item index="/model-compare">
@@ -90,7 +91,8 @@ const pageTitle = computed(() => {
     '/': '首页',
     '/tasks': '任务管理',
     '/perf-results': '场景管理',
-    '/quality-results': '测试报告'
+    '/quality-results': '安全审计',
+    '/quality-eval-results': '质量评测'
   }
   return titles[route.path] || '模型质量测试平台'
 })

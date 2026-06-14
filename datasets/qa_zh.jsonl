@@ -1,0 +1,10 @@
+{"id":"zh-1","prompt":"中国的首都是哪个城市？","answer":"北京","metadata":{"domain":"geography","lang":"zh"}}
+{"id":"zh-2","prompt":"水的化学式是什么？","answer":"H2O","metadata":{"domain":"science","lang":"zh"}}
+{"id":"zh-3","prompt":"世界上最高的山峰是什么？","answer":"珠穆朗玛峰","metadata":{"domain":"geography","lang":"zh"}}
+{"id":"zh-4","prompt":"地球绕太阳公转一周大约需要多少天？","answer":"365","metadata":{"domain":"science","lang":"zh"}}
+{"id":"zh-5","prompt":"中国最长的河流是什么？","answer":"长江","metadata":{"domain":"geography","lang":"zh"}}
+{"id":"zh-6","prompt":"光合作用需要什么气体？","answer":"二氧化碳","metadata":{"domain":"science","lang":"zh"}}
+{"id":"zh-7","prompt":"唐朝最著名的浪漫主义诗人是谁？","answer":"李白","metadata":{"domain":"literature","lang":"zh"}}
+{"id":"zh-8","prompt":"中国有多少个省级行政区？","answer":"34","metadata":{"domain":"geography","lang":"zh"}}
+{"id":"zh-9","prompt":"太阳系中最大的行星是什么？","answer":"木星","metadata":{"domain":"science","lang":"zh"}}
+{"id":"zh-10","prompt":"《红楼梦》的作者是谁？","answer":"曹雪芹","metadata":{"domain":"literature","lang":"zh"}}

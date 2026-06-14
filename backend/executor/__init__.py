@@ -11,7 +11,7 @@ import time as time_module
 from datetime import datetime
 from pathlib import Path
 from threading import Thread, Lock, Event
-from ..models import db, Task, PerfTestResult, QualityTestResult
+from ..models import db, Task, PerfTestResult, QualityTestResult, QualityEvalResult
 from ..config import config
 
 
@@ -101,8 +101,10 @@ class TaskExecutor:
 
                 if task.task_type == 'perf_test':
                     result = self._execute_perf_test(task, app)
-                elif task.task_type == 'quality_test':
-                    result = self._execute_quality_test(task, app)
+                elif task.task_type == 'safety_audit':
+                    result = self._execute_safety_audit(task, app)
+                elif task.task_type == 'quality_eval':
+                    result = self._execute_quality_eval(task, app)
                 elif task.task_type == 'availability_test':
                     result = self._execute_availability_test(task, app)
                 else:
@@ -464,9 +466,342 @@ class TaskExecutor:
         if engine and engine.is_running():
             return engine.metrics.snapshot()
         return None
-    
-    def _execute_quality_test(self, task, app):
-        """执行模型质量测试"""
+
+    def _execute_quality_eval(self, task, app):
+        """执行模型质量评测（基于数据集的自动评分）"""
+        import asyncio
+        import aiohttp
+        from ..data.loaders import DatasetLoader
+        from ..metrics.manager import MetricsManager
+        from ..metrics.llm_judge import build_judge_prompt, parse_judge_score
+        from ..models import JudgeModel
+
+        config = json.loads(task.config)
+
+        url = config['url']
+        api_key = config['api_key']
+        model = config.get('model', '')
+        dataset_path = config.get('dataset_path', '')
+        input_column = config.get('input_column') or 'prompt'
+        answer_column = config.get('answer_column') or 'answer'
+        # 确保列名是有效字符串（防止误填数字）
+        if not isinstance(input_column, str) or not input_column.strip() or input_column.strip().isdigit():
+            input_column = 'prompt'
+        else:
+            input_column = input_column.strip()
+        if not isinstance(answer_column, str) or not answer_column.strip() or answer_column.strip().isdigit():
+            answer_column = 'answer'
+        else:
+            answer_column = answer_column.strip()
+        metric_names = config.get('metrics', ['exact_match', 'token_f1', 'rouge_l', 'char_f1'])
+        max_tokens = config.get('max_tokens', 1024)
+        limit = config.get('limit')
+        concise_mode = config.get('concise_mode', True)
+
+        # 加载评价模型配置：只有用户主动选择了 llm_judge 指标时才调用评价模型
+        judge_model_ids = config.get('judge_model_ids', [])
+        judge_models = []
+        if judge_model_ids and 'llm_judge' in metric_names:
+            judge_models = JudgeModel.query.filter(JudgeModel.id.in_(judge_model_ids)).all()
+            if judge_models:
+                app.logger.info(f"[Task {task.id}] Using {len(judge_models)} judge models: {[jm.name for jm in judge_models]}")
+
+        # 统一处理 API URL：如果用户输入的路径已包含 /chat/completions 则直接用，否则自动拼接
+        if not url.endswith('/chat/completions'):
+            if url.endswith('/v1'):
+                url += '/chat/completions'
+            elif '/v1/' not in url:
+                url += '/v1/chat/completions'
+
+        # 校验数据集路径
+        if not dataset_path:
+            raise ValueError("数据集路径不能为空，请在任务配置中选择或输入数据集路径")
+
+        # 加载数据集
+        loader = DatasetLoader()
+        samples = loader.load(dataset_path, input_column=input_column,
+                              answer_column=answer_column, limit=limit)
+        app.logger.info(f"[Task {task.id}] Loaded {len(samples)} samples from {dataset_path}")
+
+        # 创建输出目录
+        output_dir = Path(app.config['UPLOAD_FOLDER']) / f"task_{task.id}"
+        output_dir.mkdir(parents=True, exist_ok=True)
+        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+        predictions_path = str(output_dir / f"predictions_{timestamp}.jsonl")
+        log_path = str(output_dir / f"quality_eval_{timestamp}.txt")
+
+        # 初始化指标管理器
+        manager = MetricsManager(metric_names)
+        sample_scores = []
+
+        # 写实时日志的辅助函数
+        def _log(msg):
+            with open(log_path, 'a', encoding='utf-8') as f:
+                f.write(msg + '\n')
+
+        _log(f"=== 模型质量评测 ===")
+        _log(f"数据集: {dataset_path}")
+        _log(f"样本数: {len(samples)}")
+        _log(f"模型: {model}")
+        _log(f"API URL: {url}")
+        _log(f"评测指标: {', '.join(metric_names)}")
+        if judge_models:
+            _log(f"评价模型: {', '.join(jm.name for jm in judge_models)}")
+        _log("")
+
+        # 逐样本调用 API 并评分
+        async def _run_eval():
+            headers = {
+                'Authorization': f'Bearer {api_key}',
+                'Content-Type': 'application/json',
+            }
+            async with aiohttp.ClientSession() as session:
+                # 第一阶段：调用目标模型，收集所有 prediction
+                _log(f"[阶段1] 开始调用目标模型 {model}，共 {len(samples)} 个样本...")
+                if concise_mode:
+                    _log(f"[阶段1] 简洁回答模式已开启")
+                predictions_list = []  # [(sample, prediction, api_error)]
+                for si, sample in enumerate(samples):
+                    messages = []
+                    if concise_mode:
+                        messages.append({'role': 'system', 'content': '请尽量简短地回答问题，只给出正确答案，不要解释或补充额外信息。'})
+                    messages.append({'role': 'user', 'content': sample.prompt})
+                    payload = {
+                        'model': model,
+                        'messages': messages,
+                        'max_tokens': max_tokens,
+                        'stream': False,
+                    }
+                    prediction = ''
+                    api_error = None
+                    try:
+                        async with session.post(url, headers=headers, json=payload,
+                                                timeout=aiohttp.ClientTimeout(total=120)) as resp:
+                            if resp.status == 200:
+                                data = await resp.json()
+                                choices = data.get('choices', [])
+                                if choices:
+                                    prediction = choices[0].get('message', {}).get('content', '')
+                            else:
+                                api_error = f"HTTP {resp.status}"
+                                app.logger.warning(f"[Task {task.id}] API error {resp.status} for sample {sample.sample_id}")
+                    except Exception as e:
+                        api_error = str(e)
+                        app.logger.warning(f"[Task {task.id}] Request failed for sample {sample.sample_id}: {e}")
+
+                    predictions_list.append((sample, prediction, api_error))
+                    _log(f"[阶段1] [{si+1}/{len(samples)}] {sample.sample_id} - {'ERROR: ' + api_error if api_error else 'OK'}")
+
+                _log(f"[阶段1] 目标模型调用完成，成功 {sum(1 for _, p, e in predictions_list if p and not e)}/{len(predictions_list)}")
+
+                # 第二阶段：并行调用评价模型
+                if judge_models:
+                    total_judge_tasks = sum(1 for _, p, e in predictions_list if p and not e) * len(judge_models)
+                    _log(f"[阶段2] 开始并行调用 {len(judge_models)} 个评价模型，共 {total_judge_tasks} 个评分任务...")
+
+                    async def _call_judge(jm, sample, prediction):
+                        """调用单个评价模型对单个样本评分"""
+                        try:
+                            judge_url = jm.url
+                            if not judge_url.endswith('/chat/completions'):
+                                if judge_url.endswith('/v1'):
+                                    judge_url += '/chat/completions'
+                                elif '/v1/' not in judge_url:
+                                    judge_url += '/v1/chat/completions'
+                            judge_prompt = build_judge_prompt(sample.prompt, sample.answer, prediction)
+                            judge_payload = {
+                                'model': jm.model,
+                                'messages': [{'role': 'user', 'content': judge_prompt}],
+                                'max_tokens': 512,
+                                'stream': False,
+                            }
+                            judge_headers = {
+                                'Authorization': f'Bearer {jm.api_key}',
+                                'Content-Type': 'application/json',
+                            }
+                            async with session.post(judge_url, headers=judge_headers, json=judge_payload,
+                                                    timeout=aiohttp.ClientTimeout(total=120)) as jresp:
+                                if jresp.status == 200:
+                                    jdata = await jresp.json()
+                                    jchoices = jdata.get('choices', [])
+                                    if jchoices:
+                                        jmsg = jchoices[0].get('message', {})
+                                        judge_text = jmsg.get('content', '') or ''
+                                        reasoning_text = jmsg.get('reasoning_content', '') or ''
+                                        # 优先从 content 解析（content 是最终输出，不受思考过程干扰）
+                                        jscore = parse_judge_score(judge_text)
+                                        if jscore != jscore and reasoning_text:
+                                            # content 解析失败，尝试从 reasoning_content 的最后一行解析
+                                            jscore = parse_judge_score(reasoning_text)
+                                        if jscore == jscore:
+                                            return (jm.name, jscore)
+                                        else:
+                                            app.logger.warning(f"[Task {task.id}] Judge {jm.name} failed to parse score from content: {judge_text[:200]}, reasoning: {reasoning_text[:200]}")
+                                            return (jm.name, None)
+                                    else:
+                                        app.logger.warning(f"[Task {task.id}] Judge {jm.name} returned empty choices")
+                                        return (jm.name, None)
+                                else:
+                                    err_body = await jresp.text()
+                                    app.logger.warning(f"[Task {task.id}] Judge {jm.name} returned HTTP {jresp.status}: {err_body[:200]}")
+                                    return (jm.name, None)
+                        except Exception as e:
+                            app.logger.warning(f"[Task {task.id}] Judge {jm.name} failed: {e}")
+                            return (jm.name, None)
+
+                    # 构建所有评价任务
+                    judge_tasks = []
+                    for i, (sample, prediction, api_error) in enumerate(predictions_list):
+                        if prediction and not api_error:
+                            for jm in judge_models:
+                                judge_tasks.append((i, _call_judge(jm, sample, prediction)))
+
+                    # 并行执行所有评价任务
+                    if judge_tasks:
+                        results = await asyncio.gather(*[t[1] for t in judge_tasks])
+                        # 将结果分配到对应样本
+                        judge_results = {}  # {sample_index: {judge_name: score}}
+                        for (idx, _), (jname, jscore) in zip(judge_tasks, results):
+                            if idx not in judge_results:
+                                judge_results[idx] = {}
+                            judge_results[idx][jname] = jscore
+                        # 统计各评价模型成功率
+                        for jm in judge_models:
+                            ok = sum(1 for v in judge_results.values() if v.get(jm.name) is not None)
+                            total = sum(1 for v in judge_results.values() if jm.name in v)
+                            _log(f"[阶段2] {jm.name}: {ok}/{total} 评分成功")
+                    else:
+                        judge_results = {}
+
+                    _log(f"[阶段2] 评价模型评分完成")
+
+                # 第三阶段：汇总分数、写日志和预测详情
+                _log(f"[阶段3] 开始汇总评分结果...")
+                for i, (sample, prediction, api_error) in enumerate(predictions_list):
+                    scores = manager.score_sample(prediction, sample.answer)
+
+                    if judge_models and prediction:
+                        judge_details = judge_results.get(i, {})
+                        judge_scores = [v for v in judge_details.values() if v is not None]
+                        if judge_scores:
+                            scores['llm_judge'] = sum(judge_scores) / len(judge_scores)
+                        else:
+                            scores['llm_judge'] = float('nan')
+                        scores['judge_details'] = judge_details
+
+                    sample_scores.append(scores)
+
+                    # 写实时日志
+                    idx = len(sample_scores)
+                    if api_error:
+                        _log(f"[{idx}/{len(samples)}] {sample.sample_id} - ERROR: {api_error}")
+                    else:
+                        score_parts = []
+                        for k, v in scores.items():
+                            if isinstance(v, dict):
+                                continue  # skip judge_details
+                            score_parts.append(f"{k}={v:.4f}" if v == v else f"{k}=N/A")
+                        if scores.get('judge_details'):
+                            for jname, jscore in scores['judge_details'].items():
+                                if jscore is not None:
+                                    score_parts.append(f"judge[{jname}]={jscore:.4f}")
+                                else:
+                                    score_parts.append(f"judge[{jname}]=N/A")
+                        _log(f"[{idx}/{len(samples)}] {sample.sample_id} - {', '.join(score_parts)}")
+
+                    # 写入逐样本预测详情
+                    with open(predictions_path, 'a', encoding='utf-8') as f:
+                        record = {
+                            'sample_id': sample.sample_id,
+                            'prompt': sample.prompt,
+                            'reference': sample.answer,
+                            'prediction': prediction,
+                            'scores': {k: (None if isinstance(v, float) and v != v else v) for k, v in scores.items()},
+                        }
+                        if api_error:
+                            record['error'] = api_error
+                        f.write(json.dumps(record, ensure_ascii=False) + '\n')
+
+        # 运行异步评测（在新线程中创建独立事件循环，避免 Flask 已有循环冲突）
+        def _run_in_thread():
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            try:
+                loop.run_until_complete(_run_eval())
+            finally:
+                loop.close()
+
+        import threading
+        eval_thread = threading.Thread(target=_run_in_thread)
+        eval_thread.start()
+        eval_thread.join()
+
+        # 聚合指标
+        aggregated = manager.aggregate(sample_scores)
+
+        # 聚合每个评价模型的独立平均分
+        judge_names = set()
+        for s in sample_scores:
+            if 'judge_details' in s and s['judge_details']:
+                judge_names.update(s['judge_details'].keys())
+        if judge_names:
+            judge_agg = {}
+            for jname in sorted(judge_names):
+                vals = [s['judge_details'][jname] for s in sample_scores
+                        if 'judge_details' in s and s['judge_details'].get(jname) is not None]
+                judge_agg[jname] = sum(vals) / len(vals) if vals else None
+            aggregated['judge_details'] = judge_agg
+
+        app.logger.info(f"[Task {task.id}] Quality eval aggregated metrics: {aggregated}")
+
+        # 检查是否有成功的调用
+        error_count = sum(1 for s in sample_scores if all(
+            (isinstance(v, dict) or v == 0 or (v != v)) for v in s.values()
+        ))
+        all_failed = error_count == len(samples)
+
+        # 写汇总日志
+        _log("")
+        _log("=== 评测汇总 ===")
+        for k, v in aggregated.items():
+            if isinstance(v, dict):
+                for dk, dv in v.items():
+                    _log(f"  {k}[{dk}]: {dv:.4f}" if dv is not None and dv == dv else f"  {k}[{dk}]: N/A")
+            else:
+                _log(f"  {k}: {v:.4f}" if v == v else f"  {k}: N/A")
+        _log(f"  成功: {len(samples) - error_count}/{len(samples)}")
+
+        # 保存结果到数据库（将 NaN 替换为 None，确保 JSON 合法）
+        import math
+        def _sanitize_metrics(d):
+            result = {}
+            for k, v in d.items():
+                if isinstance(v, float) and math.isnan(v):
+                    result[k] = None
+                elif isinstance(v, dict):
+                    result[k] = {dk: (None if isinstance(dv, float) and math.isnan(dv) else dv) for dk, dv in v.items()}
+                else:
+                    result[k] = v
+            return result
+
+        result = QualityEvalResult(
+            task_id=task.id,
+            execution_time=datetime.now(),
+            metrics_json=json.dumps(_sanitize_metrics(aggregated), ensure_ascii=False),
+            predictions_file=predictions_path,
+            log_file=log_path,
+            dataset_path=dataset_path,
+            sample_count=len(samples),
+            status='error' if all_failed else 'success',
+            error_message=f'所有 {len(samples)} 个样本的 API 调用均失败，请检查 API URL 和 Key 是否正确' if all_failed else None,
+        )
+        db.session.add(result)
+        self._safe_commit()
+
+        return result
+
+    def _execute_safety_audit(self, task, app):
+        """执行安全审计"""
         config = json.loads(task.config)
         
         app.logger.info(f"Executing quality test with config: {config}")

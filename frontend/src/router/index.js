@@ -5,6 +5,7 @@ import Dashboard from '@/views/Dashboard.vue'
 import Tasks from '@/views/Tasks.vue'
 import PerfResults from '@/views/PerfResults.vue'
 import QualityResults from '@/views/QualityResults.vue'
+import QualityEvalResults from '@/views/QualityEvalResults.vue'
 import AvailabilityMonitor from '@/views/AvailabilityMonitor.vue'
 import ModelCompare from '@/views/ModelCompare.vue'
 import SystemMonitor from '@/views/SystemMonitor.vue'
@@ -40,6 +41,11 @@ const routes = [
         path: 'quality-results',
         name: 'QualityResults',
         component: QualityResults
+      },
+      {
+        path: 'quality-eval-results',
+        name: 'QualityEvalResults',
+        component: QualityEvalResults
       },
       {
         path: 'availability-monitor',
