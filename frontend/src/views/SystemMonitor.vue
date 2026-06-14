@@ -63,13 +63,13 @@
           <div v-for="gpu in metrics.gpu" :key="gpu.index" class="gpu-item">
             <div class="gpu-name">{{ gpu.name }}</div>
             <el-progress
-              :percentage="gpu.utilization_percent || (gpu.allocated_gb / gpu.total_memory_gb * 100)"
-              :color="getProgressColor(gpu.utilization_percent || (gpu.allocated_gb / gpu.total_memory_gb * 100))"
+              :percentage="getGpuPercent(gpu)"
+              :color="getProgressColor(getGpuPercent(gpu))"
               :stroke-width="14"
               :text-inside="true"
             />
             <div class="metric-detail">
-              {{ gpu.allocated_gb || gpu.used_memory_gb || 0 }}GB / {{ gpu.total_memory_gb }}GB
+              {{ gpu.used_memory_gb || gpu.allocated_gb || 0 }}GB / {{ gpu.total_memory_gb }}GB
             </div>
           </div>
         </div>
@@ -130,6 +130,16 @@ function formatUptime(seconds) {
   if (d > 0) return `${d}天${h}小时`
   if (h > 0) return `${h}小时${m}分钟`
   return `${m}分钟`
+}
+
+function getGpuPercent(gpu) {
+  if (gpu.utilization_percent != null && !isNaN(gpu.utilization_percent)) {
+    return gpu.utilization_percent
+  }
+  const used = gpu.used_memory_gb || gpu.allocated_gb || 0
+  const total = gpu.total_memory_gb || 1
+  const pct = (used / total) * 100
+  return isNaN(pct) ? 0 : Math.round(pct * 10) / 10
 }
 </script>
 

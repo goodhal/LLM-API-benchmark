@@ -214,7 +214,7 @@ def _build_perf_html_report(result):
     <div class="test-panel test-content-panel">
       <div class="panel-title">📋 测试说明</div>
       <div class="panel-body">
-        <p>使用 <strong>EvalScope</strong> 工具对 API 进行压测，模拟多并发请求场景。</p>
+        <p>使用 <strong>{'内置引擎' if (result.command or '').startswith('[Native Engine]') else 'EvalScope'}</strong> 对 API 进行压测，模拟多并发请求场景。</p>
         <p>关键指标含义：</p>
         <ul>
           <li><strong>RPS</strong>: 每秒请求数，越高越好</li>

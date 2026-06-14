@@ -71,7 +71,8 @@ export const taskAPI = {
   updateTask: (id, data) => api.put(`/tasks/${id}`, data),
   deleteTask: (id) => api.delete(`/tasks/${id}`),
   runTask: (id) => api.post(`/tasks/${id}/run`),
-  stopTask: (id) => api.post(`/tasks/${id}/stop`)
+  stopTask: (id) => api.post(`/tasks/${id}/stop`),
+  getLiveMetrics: (id) => api.get(`/tasks/${id}/live-metrics`)
 }
 
 // 结果 API

@@ -10,7 +10,7 @@ import traceback
 import time as time_module
 from datetime import datetime
 from pathlib import Path
-from threading import Thread, Lock
+from threading import Thread, Lock, Event
 from ..models import db, Task, PerfTestResult, QualityTestResult
 from ..config import config
 
@@ -21,6 +21,10 @@ class TaskExecutor:
     def __init__(self):
         self.running_tasks = {}
         self.lock = Lock()
+        # 自研引擎的实时指标存储 {task_id: LLMPerfEngine}
+        self._live_engines = {}
+        # 自研引擎的停止事件 {task_id: threading.Event}
+        self._stop_events = {}
     
     def execute_async(self, task, app):
         """异步执行任务"""
@@ -37,12 +41,20 @@ class TaskExecutor:
                 self._execute_task(task_id, app)
     
     def stop(self, task):
+        # 优先停止自研引擎
+        if task.id in self._stop_events:
+            self._stop_events[task.id].set()
+        
         with self.lock:
             if task.id in self.running_tasks:
                 process = self.running_tasks[task.id]
                 if process:
                     process.terminate()
                 del self.running_tasks[task.id]
+        
+        # 清理自研引擎引用
+        self._live_engines.pop(task.id, None)
+        self._stop_events.pop(task.id, None)
         
         # 更新任务状态
         task.status = 'idle'
@@ -124,6 +136,13 @@ class TaskExecutor:
 
         # 简化日志，只记录关键信息
         app.logger.info(f"[Task {task.id}] Perf test - model: {config.get('model')}, parallel: {config.get('parallel')}")
+
+        # 根据配置选择引擎：native=自研引擎，evalscope=默认CLI
+        engine_type = config.get('engine', 'evalscope')
+        if engine_type == 'native':
+            return self._execute_perf_test_native(task, app, config)
+        
+        # 以下是原有的 evalscope 逻辑
         
         # 生成唯一的输出目录名（使用任务ID和时间戳）
         timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
@@ -259,6 +278,192 @@ class TaskExecutor:
         app.logger.info(f"Perf test result saved: {perf_result.id}")
         
         return perf_result
+    
+    def _execute_perf_test_native(self, task, app, config):
+        """使用自研引擎执行服务压力测试"""
+        from .llm_engine import run_llm_perf_test, LLMPerfEngine
+        
+        app.logger.info(f"[Task {task.id}] Using native engine for perf test")
+        
+        # 创建停止事件
+        stop_event = Event()
+        self._stop_events[task.id] = stop_event
+        
+        # 构建引擎配置
+        engine_config = {
+            'url': config['url'],
+            'api_key': config['api_key'],
+            'model': config['model'],
+            'api': config.get('api', 'openai'),
+            'parallel': config.get('parallel', 8),
+            'number': config.get('number', 50),
+            'stream': True,  # 自研引擎始终使用流式以精确测量 TTFT/TPOT
+            'max_tokens': config.get('max_tokens', 128),
+            'connect_timeout': config.get('connect_timeout', 60),
+            'read_timeout': config.get('read_timeout', 120),
+        }
+        
+        # 如果有自定义 prompt
+        if config.get('prompt'):
+            engine_config['prompt'] = config['prompt']
+        
+        # 创建引擎实例并注册到实时指标存储
+        engine = LLMPerfEngine(engine_config)
+        self._live_engines[task.id] = engine
+        
+        # 创建输出目录（保存实时日志）
+        output_dir = Path(app.config['UPLOAD_FOLDER']) / f"task_{task.id}"
+        output_dir.mkdir(parents=True, exist_ok=True)
+        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+        filename = f"perf_{timestamp}.txt"
+        filepath = output_dir / filename
+        output_file = str(filepath)
+        
+        # 构建命令字符串（用于记录，自研引擎无实际命令）
+        cmd_str = f"[Native Engine] model={config['model']}, parallel={engine_config['parallel']}, number={engine_config['number']}, stream=True"
+        
+        # 先写入头部信息，让前端可以立即看到日志
+        with open(filepath, 'w', encoding='utf-8') as f:
+            f.write(f"=== Native Engine Performance Test ===\n")
+            f.write(f"Model: {config['model']}\n")
+            f.write(f"API: {engine_config.get('api', 'openai')}\n")
+            f.write(f"URL: {config['url']}\n")
+            f.write(f"Concurrency: {engine_config['parallel']}\n")
+            f.write(f"Total Requests: {engine_config['number']}\n")
+            f.write(f"Stream: True\n")
+            f.write(f"Max Tokens: {engine_config['max_tokens']}\n")
+            f.write(f"\n=== Running... ===\n")
+            f.flush()
+        
+        try:
+            # 运行压测（在独立线程中，同时实时写日志）
+            import threading
+            
+            def _run_test():
+                return run_llm_perf_test(engine_config, stop_event=stop_event)
+            
+            test_result = [None]
+            test_error = [None]
+            
+            def _test_thread():
+                try:
+                    test_result[0] = _run_test()
+                except Exception as e:
+                    test_error[0] = e
+            
+            t = threading.Thread(target=_test_thread, daemon=True)
+            t.start()
+            
+            # 实时写入日志：等待测试完成，同时定期追加指标快照
+            last_count = 0
+            while t.is_alive():
+                t.join(timeout=2.0)
+                # 追加实时指标到日志文件
+                try:
+                    snap = engine.metrics.snapshot()
+                    count = snap.get('request_count', 0)
+                    if count > last_count:
+                        avg_ttft = snap.get('avg_ttft')
+                        ttft_str = f"{avg_ttft:.0f}ms" if avg_ttft else '-'
+                        with open(filepath, 'a', encoding='utf-8') as f:
+                            f.write(f"[{datetime.now().strftime('%H:%M:%S')}] "
+                                    f"requests={count}, "
+                                    f"success={snap.get('success_count', 0)}, "
+                                    f"error={snap.get('error_count', 0)}, "
+                                    f"rps={snap.get('rps', 0)}, "
+                                    f"avg_latency={snap.get('avg_latency', 0):.3f}s, "
+                                    f"avg_ttft={ttft_str}, "
+                                    f"success_rate={snap.get('success_rate', 0):.1f}%\n")
+                            f.flush()
+                        last_count = count
+                except Exception:
+                    pass
+            
+            if test_error[0]:
+                raise test_error[0]
+            
+            result_data = test_result[0]
+            
+            # 追加最终结果到日志文件
+            try:
+                with open(filepath, 'a', encoding='utf-8') as f:
+                    f.write(f"\n=== Results ===\n")
+                    f.write(f"Concurrency: {result_data.get('concurrency')}\n")
+                    f.write(f"Total Requests: {result_data.get('total_requests')}\n")
+                    f.write(f"Success Requests: {result_data.get('success_requests')}\n")
+                    f.write(f"Error Requests: {result_data.get('error_requests')}\n")
+                    f.write(f"Elapsed: {result_data.get('elapsed_seconds')}s\n")
+                    f.write(f"RPS: {result_data.get('rps')}\n")
+                    f.write(f"Avg Latency: {result_data.get('avg_latency')}s\n")
+                    f.write(f"P99 Latency: {result_data.get('p99_latency')}s\n")
+                    f.write(f"Avg TTFT: {result_data.get('avg_ttft')}ms\n")
+                    f.write(f"P99 TTFT: {result_data.get('p99_ttft')}ms\n")
+                    f.write(f"Avg TPOT: {result_data.get('avg_tpot')}ms\n")
+                    f.write(f"P99 TPOT: {result_data.get('p99_tpot')}ms\n")
+                    f.write(f"Gen Tok/s: {result_data.get('gen_toks')}\n")
+                    f.write(f"Success Rate: {result_data.get('success_rate')}%\n")
+                    f.write(f"Prompt Tokens: {result_data.get('prompt_tokens')}\n")
+                    f.write(f"Completion Tokens: {result_data.get('completion_tokens')}\n")
+                    f.write(f"Total Tokens: {result_data.get('total_tokens')}\n")
+                    if result_data.get('error_types'):
+                        f.write(f"Error Types: {json.dumps(result_data['error_types'])}\n")
+            except Exception as e:
+                app.logger.warning(f"Failed to write native engine output: {e}")
+            
+            # 保存结果到数据库（字段与 PerfTestResult 完全对齐）
+            perf_result = PerfTestResult(
+                task_id=task.id,
+                execution_time=datetime.now(),
+                command=cmd_str,
+                output_file=output_file,
+                status='success'
+            )
+            
+            perf_result.concurrency = result_data.get('concurrency')
+            perf_result.avg_latency = result_data.get('avg_latency')
+            perf_result.p99_latency = result_data.get('p99_latency')
+            perf_result.avg_ttft = result_data.get('avg_ttft')
+            perf_result.p99_ttft = result_data.get('p99_ttft')
+            perf_result.avg_tpot = result_data.get('avg_tpot')
+            perf_result.p99_tpot = result_data.get('p99_tpot')
+            perf_result.rps = result_data.get('rps')
+            perf_result.gen_toks = result_data.get('gen_toks')
+            perf_result.success_rate = result_data.get('success_rate')
+            
+            db.session.add(perf_result)
+            self._safe_commit()
+            
+            app.logger.info(f"Native engine perf test result saved: {perf_result.id}")
+            return perf_result
+            
+        except Exception as e:
+            app.logger.error(f"[Task {task.id}] Native engine failed: {e}")
+            traceback.print_exc(file=sys.stderr)
+            
+            # 保存失败结果
+            perf_result = PerfTestResult(
+                task_id=task.id,
+                execution_time=datetime.now(),
+                command=cmd_str,
+                output_file=output_file,
+                status='failed',
+                error_message=str(e)
+            )
+            db.session.add(perf_result)
+            self._safe_commit()
+            return perf_result
+            
+        finally:
+            # 清理实时引用
+            self._live_engines.pop(task.id, None)
+            self._stop_events.pop(task.id, None)
+    
+    def get_live_metrics(self, task_id: int):
+        """获取任务的实时指标（自研引擎）"""
+        engine = self._live_engines.get(task_id)
+        if engine and engine.is_running():
+            return engine.metrics.snapshot()
+        return None
     
     def _execute_quality_test(self, task, app):
         """执行模型质量测试"""
@@ -733,6 +938,18 @@ class TaskExecutor:
                              model_name, parallel, number, connect_timeout, read_timeout):
         """测试单个渠道的性能"""
         
+        # 获取任务配置中的引擎类型
+        task_config = json.loads(task.config) if isinstance(task.config, str) else task.config
+        engine_type = task_config.get('engine', 'evalscope')
+        
+        if engine_type == 'native':
+            return self._test_single_channel_native(
+                task, app, channel_name, channel_url, channel_api_key,
+                model_name, parallel, number, connect_timeout, read_timeout
+            )
+        
+        # 以下是原有的 evalscope 逻辑
+        
         # 生成唯一的输出目录名
         timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
         unique_output_dir = f"evalscope_outputs/task_{task.id}_channel_{channel_name}"
@@ -805,3 +1022,37 @@ class TaskExecutor:
             raise Exception("Failed to parse performance metrics from output")
         
         return perf_result
+    
+    def _test_single_channel_native(self, task, app, channel_name, channel_url, channel_api_key,
+                                     model_name, parallel, number, connect_timeout, read_timeout):
+        """使用自研引擎测试单个渠道的性能"""
+        from .llm_engine import run_llm_perf_test
+        
+        engine_config = {
+            'url': channel_url,
+            'api_key': channel_api_key,
+            'model': model_name,
+            'api': 'openai',
+            'parallel': parallel,
+            'number': number,
+            'stream': True,
+            'max_tokens': 128,
+            'connect_timeout': connect_timeout,
+            'read_timeout': read_timeout,
+        }
+        
+        result_data = run_llm_perf_test(engine_config)
+        
+        # 返回与 _parse_perf_output 相同格式的字典
+        return {
+            'concurrency': result_data.get('concurrency', parallel),
+            'rps': result_data.get('rps'),
+            'avg_latency': result_data.get('avg_latency'),
+            'p99_latency': result_data.get('p99_latency'),
+            'avg_ttft': result_data.get('avg_ttft'),
+            'p99_ttft': result_data.get('p99_ttft'),
+            'avg_tpot': result_data.get('avg_tpot'),
+            'p99_tpot': result_data.get('p99_tpot'),
+            'gen_toks': result_data.get('gen_toks'),
+            'success_rate': result_data.get('success_rate'),
+        }

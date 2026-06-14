@@ -329,7 +329,7 @@ const renderCharts = () => {
     }))
     chart.setOption({
       ...baseOption,
-      yAxis: { ...baseOption.yAxis, name: 'TTFT(s)' },
+      yAxis: { ...baseOption.yAxis, name: 'TTFT(ms)' },
       series
     })
     charts.push(chart)

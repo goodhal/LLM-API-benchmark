@@ -139,6 +139,14 @@
           
           <el-divider>高级配置</el-divider>
           
+          <el-form-item label="测试引擎">
+            <el-radio-group v-model="taskForm.config.engine">
+              <el-radio label="evalscope">EvalScope (CLI)</el-radio>
+              <el-radio label="native">Native (内置)</el-radio>
+            </el-radio-group>
+            <div class="form-tip">Native 引擎支持实时指标和精确 TTFT/TPOT 测量</div>
+          </el-form-item>
+          
           <el-form-item label="最小提示长度">
             <el-input-number v-model="taskForm.config.min_prompt_length" :min="1" :max="1000000" />
           </el-form-item>
@@ -310,6 +318,47 @@
       :close-on-click-modal="false"
       @close="closeLogDialog"
     >
+      <!-- 实时指标面板（Native 引擎） -->
+      <div v-if="liveMetrics" class="live-metrics-panel">
+        <el-row :gutter="16">
+          <el-col :span="4">
+            <div class="metric-card">
+              <div class="metric-value">{{ liveMetrics.rps }}</div>
+              <div class="metric-label">RPS</div>
+            </div>
+          </el-col>
+          <el-col :span="4">
+            <div class="metric-card">
+              <div class="metric-value">{{ liveMetrics.avg_latency?.toFixed(2) }}s</div>
+              <div class="metric-label">平均延迟</div>
+            </div>
+          </el-col>
+          <el-col :span="4">
+            <div class="metric-card">
+              <div class="metric-value">{{ liveMetrics.avg_ttft?.toFixed(0) }}ms</div>
+              <div class="metric-label">平均TTFT</div>
+            </div>
+          </el-col>
+          <el-col :span="4">
+            <div class="metric-card">
+              <div class="metric-value">{{ liveMetrics.success_rate?.toFixed(1) }}%</div>
+              <div class="metric-label">成功率</div>
+            </div>
+          </el-col>
+          <el-col :span="4">
+            <div class="metric-card">
+              <div class="metric-value">{{ liveMetrics.request_count }}</div>
+              <div class="metric-label">请求数</div>
+            </div>
+          </el-col>
+          <el-col :span="4">
+            <div class="metric-card">
+              <div class="metric-value">{{ liveMetrics.gen_toks?.toFixed(1) }}</div>
+              <div class="metric-label">tok/s</div>
+            </div>
+          </el-col>
+        </el-row>
+      </div>
       <div class="log-header">
         <span>任务: {{ currentLogTask?.name }}</span>
         <el-switch v-model="autoScroll" active-text="自动滚动" />
@@ -345,6 +394,7 @@ const editingTaskId = ref(null)
 // 实时日志相关
 const logDialogVisible = ref(false)
 const logContent = ref('')
+const liveMetrics = ref(null)
 const logContentRef = ref(null)
 const currentLogTask = ref(null)
 const autoScroll = ref(true)
@@ -365,6 +415,7 @@ const taskForm = reactive({
     max_tokens: 128,
     connect_timeout: 60,
     read_timeout: 120,
+    engine: 'evalscope',
     channels: [
       { name: '渠道1', url: '', api_key: '', showPassword: false }
     ]
@@ -421,6 +472,7 @@ const handleEdit = (row) => {
       max_tokens: 128,
       connect_timeout: 60,
       read_timeout: 120,
+      engine: 'evalscope',
       // 覆盖为实际值
       ...parsedConfig
     },
@@ -530,21 +582,29 @@ const refreshLog = async () => {
   if (!currentLogTask.value) return
   
   try {
-    const response = await fetch(`/api/tasks/${currentLogTask.value.id}/output-content`, {
-      headers: {
-        'Authorization': `Bearer ${localStorage.getItem('token')}`
-      }
-    })
-    const data = await response.json()
+    // 并行获取日志内容和实时指标
+    const [logResponse, metricsResponse] = await Promise.all([
+      fetch(`/api/tasks/${currentLogTask.value.id}/output-content`, {
+        headers: { 'Authorization': `Bearer ${localStorage.getItem('token')}` }
+      }).then(r => r.json()),
+      taskAPI.getLiveMetrics(currentLogTask.value.id).catch(() => ({ metrics: null, running: false }))
+    ])
     
-    if (data.exists) {
-      logContent.value = data.content
+    if (logResponse.exists) {
+      logContent.value = logResponse.content
       
       // 自动滚动到底部
       if (autoScroll.value && logContentRef.value) {
         await nextTick()
         logContentRef.value.scrollTop = logContentRef.value.scrollHeight
       }
+    }
+    
+    // 更新实时指标
+    if (metricsResponse.running && metricsResponse.metrics) {
+      liveMetrics.value = metricsResponse.metrics
+    } else {
+      liveMetrics.value = null
     }
     
     // 如果任务不再是 running 状态，停止刷新
@@ -568,6 +628,7 @@ const closeLogDialog = () => {
   }
   logDialogVisible.value = false
   currentLogTask.value = null
+  liveMetrics.value = null
 }
 
 const handleEnableChange = async (row) => {
@@ -596,6 +657,7 @@ const resetForm = () => {
       max_tokens: 128,
       connect_timeout: 60,
       read_timeout: 120,
+      engine: 'evalscope',
       channels: [
         { name: '渠道1', api_key: '', showPassword: false }
       ]
@@ -737,5 +799,31 @@ onMounted(() => {
   line-height: 1.6;
   white-space: pre-wrap;
   word-wrap: break-word;
+}
+
+.live-metrics-panel {
+  margin-bottom: 16px;
+  padding: 12px;
+  background: #f0f9eb;
+  border-radius: 8px;
+  border: 1px solid #e1f3d8;
+}
+
+.metric-card {
+  text-align: center;
+  padding: 8px 4px;
+}
+
+.metric-value {
+  font-size: 20px;
+  font-weight: 700;
+  color: #409eff;
+  line-height: 1.4;
+}
+
+.metric-label {
+  font-size: 12px;
+  color: #909399;
+  margin-top: 2px;
 }
 </style>

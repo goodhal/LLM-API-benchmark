@@ -264,6 +264,24 @@ def stop_task(task_id):
     return jsonify({'message': 'Task stopped successfully'}), 200
 
 
+@tasks_bp.route('/<int:task_id>/live-metrics', methods=['GET'])
+@login_required
+def get_live_metrics(task_id):
+    """获取任务的实时指标（自研引擎）"""
+    task = Task.query.get_or_404(task_id)
+    
+    if task.status != 'running':
+        return jsonify({'metrics': None, 'running': False}), 200
+    
+    metrics = executor.get_live_metrics(task_id)
+    
+    if metrics is None:
+        # 非 native 引擎或引擎尚未启动
+        return jsonify({'metrics': None, 'running': True}), 200
+    
+    return jsonify({'metrics': metrics, 'running': True}), 200
+
+
 def schedule_task(task):
     """将任务添加到调度器"""
     job_id = f'task_{task.id}'
