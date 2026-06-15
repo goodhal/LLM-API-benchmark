@@ -29,6 +29,8 @@
           <el-menu-item index="/quality-results">安全审计</el-menu-item>
           <el-menu-item index="/quality-eval-results">质量评测</el-menu-item>
           <el-menu-item index="/availability-monitor">可用性监控</el-menu-item>
+          <el-menu-item index="/consistency-results">一致性测试</el-menu-item>
+          <el-menu-item index="/regression-results">回归测试</el-menu-item>
         </el-sub-menu>
         <el-menu-item index="/model-compare">
           <span>模型对比</span>

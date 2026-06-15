@@ -1,0 +1,52 @@
+# 测试套件参考：回归测试
+#
+# 本文件为参考模板，展示回归测试的配置方式。
+# 实际使用时通过前端"任务管理"页面创建 regression_test 任务，
+# 配置 baseline 路径、退化阈值、Prompt 引用和评价模型。
+#
+# 前端配置项对应关系：
+#   baseline_path  → 基线 JSON 文件路径
+#   thresholds.accuracy_drop  → 准确率退化阈值 (默认 0.05)
+#   thresholds.latency_increase → 延迟增长率阈值 (默认 1.2)
+#   prompt_refs    → 选择的 Prompt 引用列表
+#   judge_model_ids → 评价模型 ID 列表
+
+suite_id: regression_v1
+name: 模型回归测试套件
+description: |
+  用于模型版本迭代的回归验证。
+  对比新版本与基线版本的差异，确保质量不下降。
+
+type: regression
+
+prompts:
+  - ref: qa/general.yaml#qa_001
+  - ref: qa/general.yaml#qa_002
+  - ref: qa/general.yaml#qa_003
+  - ref: math/basic.yaml#math_001
+  - ref: math/basic.yaml#math_002
+  - ref: math/basic.yaml#math_003
+  - ref: reasoning/logic.yaml#reasoning_001
+  - ref: reasoning/logic.yaml#reasoning_002
+
+execution:
+  concurrency: 1
+  timeout: 120
+
+evaluation:
+  evaluators:
+    - type: keyword_match
+    - type: llm_judge
+
+  thresholds:
+    accuracy_drop: 0.05
+    latency_increase: 1.2
+
+report:
+  baseline: results/regression_v1_baseline.json
+
+metadata:
+  author: test_team
+  created_at: "2024-01-15"
+  priority: P0
+  tags: [regression, comprehensive]

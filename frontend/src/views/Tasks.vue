@@ -113,6 +113,8 @@
             <el-radio label="safety_audit">安全审计</el-radio>
             <el-radio label="quality_eval">模型质量评测</el-radio>
             <el-radio label="availability_test">服务可用性测试</el-radio>
+            <el-radio label="consistency_test">一致性测试</el-radio>
+            <el-radio label="regression_test">回归测试</el-radio>
           </el-radio-group>
         </el-form-item>
         
@@ -248,6 +250,47 @@
           <el-form-item label="模型名称" prop="config.model">
             <el-input v-model="taskForm.config.model" placeholder="claude-opus-4-6" />
           </el-form-item>
+
+          <el-divider>增强审计选项（借鉴 PyRIT）</el-divider>
+
+          <el-form-item label="增强模式">
+            <el-switch v-model="taskForm.config.use_enhanced" />
+            <div class="form-tip">启用后使用内建攻击变换器链和多维度评分体系，无需外部 audit.py 脚本</div>
+          </el-form-item>
+
+          <template v-if="taskForm.config.use_enhanced">
+            <el-form-item label="攻击变换器">
+              <el-select
+                v-model="taskForm.config.converters"
+                multiple
+                placeholder="选择 Prompt 攻击变换器（可多选）"
+                style="width: 100%"
+              >
+                <el-option-group
+                  v-for="tagGroup in converterTagGroups"
+                  :key="tagGroup.label"
+                  :label="tagGroup.label"
+                >
+                  <el-option
+                    v-for="c in tagGroup.options"
+                    :key="c.name"
+                    :label="`${c.display_name} - ${c.description}`"
+                    :value="c.name"
+                  />
+                </el-option-group>
+              </el-select>
+              <div class="form-tip">变换器按顺序链式执行（如 Base64 → ROT13 → Unicode）</div>
+            </el-form-item>
+
+            <el-form-item label="样本数量限制">
+              <el-input-number v-model="taskForm.config.limit" :min="1" :max="1000" />
+              <div class="form-tip">限制攻击样本数量，留空则使用全部 30 个攻击提示</div>
+            </el-form-item>
+
+            <el-form-item label="最大生成Token">
+              <el-input-number v-model="taskForm.config.max_tokens" :min="1" :max="32000" />
+            </el-form-item>
+          </template>
         </template>
 
         <!-- 模型质量评测配置 -->
@@ -409,6 +452,145 @@
             <el-input-number v-model="taskForm.config.read_timeout" :min="1" :max="1200" />
           </el-form-item>
         </template>
+
+        <!-- 一致性测试配置 -->
+        <template v-if="taskForm.task_type === 'consistency_test'">
+          <el-form-item label="API URL" prop="config.url">
+            <el-input v-model="taskForm.config.url" placeholder="https://api.example.com/v1/chat/completions" />
+          </el-form-item>
+
+          <el-form-item label="API Key" prop="config.api_key">
+            <el-input v-model="taskForm.config.api_key" type="password" placeholder="sk-xxxx" />
+          </el-form-item>
+
+          <el-form-item label="模型名称" prop="config.model">
+            <el-input v-model="taskForm.config.model" placeholder="gpt-3.5-turbo" />
+          </el-form-item>
+
+          <el-divider>测试参数</el-divider>
+
+          <el-form-item label="迭代次数">
+            <el-input-number v-model="taskForm.config.iterations" :min="2" :max="100" />
+            <div class="form-tip">同一 Prompt 多次调用，检测输出稳定性</div>
+          </el-form-item>
+
+          <el-form-item label="最大生成Token">
+            <el-input-number v-model="taskForm.config.max_tokens" :min="1" :max="32000" />
+          </el-form-item>
+
+          <el-divider>Prompt 选择</el-divider>
+
+          <el-form-item label="Prompt">
+            <el-select
+              v-model="prompt_refs"
+              multiple
+              filterable
+              placeholder="选择 Prompt（可多选）"
+              style="width: 100%"
+            >
+              <el-option-group
+                v-for="lib in promptLibraryGroups"
+                :key="lib.name"
+                :label="`${lib.name} (${lib.count}个)`"
+              >
+                <el-option
+                  v-for="p in lib.prompts"
+                  :key="p.ref"
+                  :label="`${p.name} [${p.category}]`"
+                  :value="p.ref"
+                />
+              </el-option-group>
+            </el-select>
+            <div class="form-tip">选择 Prompt 库中的 Prompt 进行一致性测试</div>
+          </el-form-item>
+
+          <el-divider>阈值设置</el-divider>
+
+          <el-form-item label="一致性阈值">
+            <el-input-number v-model="thresholds.consistency" :min="0.1" :max="1.0" :step="0.05" :precision="2" />
+            <div class="form-tip">相似度低于此阈值视为不一致（默认 0.8）</div>
+          </el-form-item>
+        </template>
+
+        <!-- 回归测试配置 -->
+        <template v-if="taskForm.task_type === 'regression_test'">
+          <el-form-item label="API URL" prop="config.url">
+            <el-input v-model="taskForm.config.url" placeholder="https://api.example.com/v1/chat/completions" />
+          </el-form-item>
+
+          <el-form-item label="API Key" prop="config.api_key">
+            <el-input v-model="taskForm.config.api_key" type="password" placeholder="sk-xxxx" />
+          </el-form-item>
+
+          <el-form-item label="模型名称" prop="config.model">
+            <el-input v-model="taskForm.config.model" placeholder="gpt-3.5-turbo" />
+          </el-form-item>
+
+          <el-divider>测试参数</el-divider>
+
+          <el-form-item label="最大生成Token">
+            <el-input-number v-model="taskForm.config.max_tokens" :min="1" :max="32000" />
+          </el-form-item>
+
+          <el-form-item label="基线文件路径">
+            <el-input v-model="taskForm.config.baseline_path" placeholder="results/regression_baseline.json" />
+            <div class="form-tip">用于对比的基线 JSON 文件路径</div>
+          </el-form-item>
+
+          <el-divider>Prompt 选择</el-divider>
+
+          <el-form-item label="Prompt">
+            <el-select
+              v-model="prompt_refs"
+              multiple
+              filterable
+              placeholder="选择 Prompt（可多选）"
+              style="width: 100%"
+            >
+              <el-option-group
+                v-for="lib in promptLibraryGroups"
+                :key="lib.name"
+                :label="`${lib.name} (${lib.count}个)`"
+              >
+                <el-option
+                  v-for="p in lib.prompts"
+                  :key="p.ref"
+                  :label="`${p.name} [${p.category}]`"
+                  :value="p.ref"
+                />
+              </el-option-group>
+            </el-select>
+          </el-form-item>
+
+          <el-form-item label="评价模型">
+            <el-select
+              v-model="taskForm.config.judge_model_ids"
+              multiple
+              placeholder="选择评价模型（可选）"
+              style="width: 100%"
+            >
+              <el-option
+                v-for="jm in judgeModelList"
+                :key="jm.id"
+                :label="`${jm.name} (${jm.model})`"
+                :value="jm.id"
+              />
+            </el-select>
+            <div class="form-tip">使用维度化评判器（LLM Judge）对回答评分；不选则使用关键词匹配</div>
+          </el-form-item>
+
+          <el-divider>退化阈值</el-divider>
+
+          <el-form-item label="准确率退化阈值">
+            <el-input-number v-model="thresholds.accuracy_drop" :min="0.01" :max="0.5" :step="0.01" :precision="2" />
+            <div class="form-tip">准确率下降超过此值视为退化（默认 0.05）</div>
+          </el-form-item>
+
+          <el-form-item label="延迟增长率阈值">
+            <el-input-number v-model="thresholds.latency_increase" :min="1.0" :max="5.0" :step="0.1" :precision="1" />
+            <div class="form-tip">延迟超过基线N倍视为退化（默认 1.2 倍）</div>
+          </el-form-item>
+        </template>
         
         <el-divider>调度设置</el-divider>
         
@@ -448,6 +630,20 @@
         
         <el-form-item label="立即启用">
           <el-switch v-model="taskForm.is_enabled" />
+        </el-form-item>
+
+        <el-divider>Memory Labels（自由标签）</el-divider>
+
+        <el-form-item label="标签">
+          <div style="width: 100%;">
+            <div v-for="(item, index) in labelPairs" :key="index" style="display: flex; gap: 8px; margin-bottom: 6px;">
+              <el-input v-model="item.key" placeholder="键名" style="flex: 1" />
+              <el-input v-model="item.value" placeholder="值" style="flex: 1" />
+              <el-button type="danger" size="small" @click="removeLabel(index)" :disabled="labelPairs.length <= 1">删除</el-button>
+            </div>
+            <el-button type="primary" size="small" @click="addLabel" style="margin-top: 6px;">添加标签</el-button>
+          </div>
+          <div class="form-tip">自由格式标签，用于分类和检索。如 harm_category=jailbreak, operator=team_a</div>
         </el-form-item>
       </el-form>
       
@@ -564,7 +760,7 @@
 <script setup>
 import { ref, reactive, onMounted, nextTick, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { taskAPI, judgeAPI } from '@/utils/api'
+import { taskAPI, judgeAPI, converterAPI, promptAPI } from '@/utils/api'
 import dayjs from 'dayjs'
 import utc from 'dayjs/plugin/utc'
 import timezone from 'dayjs/plugin/timezone'
@@ -575,6 +771,9 @@ dayjs.extend(timezone)
 
 const tasks = ref([])
 const datasetList = ref([])
+const converterList = ref([])
+const converterTagGroups = ref([])
+const labelPairs = ref([{ key: '', value: '' }])
 const dialogVisible = ref(false)
 const isEdit = ref(false)
 const submitting = ref(false)
@@ -635,6 +834,16 @@ const taskForm = reactive({
   is_enabled: false
 })
 
+// Prompt 库
+const prompt_refs = ref([])
+const thresholds = reactive({
+  consistency: 0.8,
+  accuracy_drop: 0.05,
+  latency_increase: 1.2
+})
+const promptLibraryGroups = ref([])
+const promptList = ref([])
+
 // 切换任务类型时重置 config，避免残留旧字段（编辑时跳过）
 watch(() => taskForm.task_type, (newType) => {
   if (isEditing.value) return
@@ -651,14 +860,16 @@ watch(() => taskForm.task_type, (newType) => {
       engine: 'evalscope',
       channels: [{ name: '渠道1', url: '', api_key: '', showPassword: false }]
     },
-    safety_audit: { ...commonConfig, test_cases: [] },
+    safety_audit: { ...commonConfig, test_cases: [], use_enhanced: false, converters: [], limit: null, max_tokens: 1024 },
     quality_eval: {
       ...commonConfig,
       dataset_path: '', input_column: 'prompt', answer_column: 'answer',
       metrics: ['exact_match', 'contains_match', 'token_f1', 'rouge_l'],
       max_tokens: 1024, limit: null, judge_model_ids: [], concise_mode: true
     },
-    availability_test: { ...commonConfig, check_interval: 60, timeout: 30 }
+    availability_test: { ...commonConfig, check_interval: 60, timeout: 30 },
+    consistency_test: { ...commonConfig, iterations: 5, max_tokens: 1024 },
+    regression_test: { ...commonConfig, max_tokens: 1024, baseline_path: '', judge_model_ids: [] }
   }
   Object.assign(taskForm.config, typeSpecific[newType] || commonConfig)
 })
@@ -699,6 +910,50 @@ const loadJudgeModels = async () => {
     judgeModelList.value = res.judge_models || []
   } catch (error) {
     console.error('Failed to load judge models:', error)
+  }
+}
+
+const loadConverters = async () => {
+  try {
+    const res = await converterAPI.getConverters()
+    converterList.value = res.converters || []
+    // 按 tag 分组
+    const tagMap = { encoding: [], obfuscation: [], visual: [], injection: [], social: [] }
+    const tagLabels = { encoding: '编码类', obfuscation: '混淆类', visual: '视觉类', injection: '注入类', social: '社会工程类' }
+    for (const c of converterList.value) {
+      for (const tag of c.tags) {
+        if (tagMap[tag]) {
+          tagMap[tag].push(c)
+        } else {
+          // 其他标签归入混淆类
+          if (!tagMap['obfuscation']) tagMap['obfuscation'] = []
+          tagMap['obfuscation'].push(c)
+        }
+      }
+    }
+    converterTagGroups.value = Object.entries(tagMap)
+      .filter(([, opts]) => opts.length > 0)
+      .map(([tag, opts]) => ({ label: tagLabels[tag] || tag, options: opts }))
+  } catch (error) {
+    console.error('Failed to load converters:', error)
+  }
+}
+
+const loadPrompts = async () => {
+  try {
+    const res = await promptAPI.listPrompts()
+    promptList.value = res.prompts || []
+    // 按 library 分组
+    const groups = {}
+    for (const p of promptList.value) {
+      const lib = p.library || 'default'
+      if (!groups[lib]) groups[lib] = { name: lib, count: 0, prompts: [] }
+      groups[lib].count++
+      groups[lib].prompts.push(p)
+    }
+    promptLibraryGroups.value = Object.values(groups)
+  } catch (error) {
+    console.error('Failed to load prompts:', error)
   }
 }
 
@@ -765,6 +1020,7 @@ const deleteJudgeModel = async (row) => {
 const showCreateDialog = () => {
   isEdit.value = false
   resetForm()
+  labelPairs.value = [{ key: '', value: '' }]
   dialogVisible.value = true
 }
 
@@ -805,6 +1061,9 @@ const handleEdit = (row) => {
 
   // 在下一个 tick 解除编辑标志，让 watch 恢复正常
   nextTick(() => { isEditing.value = false })
+
+  // 填充标签
+  setLabelPairsFromLabels(row.labels || {})
   
   dialogVisible.value = true
 }
@@ -825,7 +1084,14 @@ const handleSubmit = async () => {
           interval_seconds: taskForm.interval_seconds,
           start_time: taskForm.start_time ? dayjs(taskForm.start_time).toISOString() : null,
           end_time: taskForm.end_time ? dayjs(taskForm.end_time).toISOString() : null,
-          is_enabled: taskForm.is_enabled
+          is_enabled: taskForm.is_enabled,
+          labels: buildLabelsFromPairs()
+        }
+
+        // 一致性/回归测试：附加阈值和 Prompt 引用
+        if (taskForm.task_type === 'consistency_test' || taskForm.task_type === 'regression_test') {
+          data.threshold_json = JSON.stringify(thresholds)
+          data.prompt_config_json = JSON.stringify(prompt_refs.value || [])
         }
         
         if (isEdit.value) {
@@ -935,7 +1201,11 @@ const refreshLog = async () => {
       const updatedTask = tasks.value.find(t => t.id === currentLogTask.value.id)
       if (updatedTask && updatedTask.status !== 'running') {
         closeLogDialog()
-        ElMessage.info('任务执行完成')
+        if (updatedTask.status === 'failed') {
+          ElMessage.error('任务执行失败')
+        } else {
+          ElMessage.success('任务执行完成')
+        }
       }
     }
   } catch (error) {
@@ -1046,7 +1316,9 @@ const getTaskTypeLabel = (type) => {
     perf_test: '压力测试',
     safety_audit: '安全审计',
     quality_eval: '质量评测',
-    availability_test: '可用性测试'
+    availability_test: '可用性测试',
+    consistency_test: '一致性测试',
+    regression_test: '回归测试'
   }
   return labels[type] || type
 }
@@ -1056,7 +1328,9 @@ const getTaskTypeColor = (type) => {
     perf_test: 'success',
     safety_audit: 'warning',
     quality_eval: 'danger',
-    availability_test: 'primary'
+    availability_test: 'primary',
+    consistency_test: '',
+    regression_test: 'info'
   }
   return colors[type] || 'info'
 }
@@ -1076,10 +1350,40 @@ const removeChannel = (index) => {
   }
 }
 
+const addLabel = () => {
+  labelPairs.value.push({ key: '', value: '' })
+}
+
+const removeLabel = (index) => {
+  if (labelPairs.value.length > 1) {
+    labelPairs.value.splice(index, 1)
+  }
+}
+
+const buildLabelsFromPairs = () => {
+  const labels = {}
+  for (const item of labelPairs.value) {
+    if (item.key.trim()) {
+      labels[item.key.trim()] = item.value.trim()
+    }
+  }
+  return Object.keys(labels).length > 0 ? labels : null
+}
+
+const setLabelPairsFromLabels = (labels) => {
+  if (labels && typeof labels === 'object' && Object.keys(labels).length > 0) {
+    labelPairs.value = Object.entries(labels).map(([k, v]) => ({ key: k, value: String(v) }))
+  } else {
+    labelPairs.value = [{ key: '', value: '' }]
+  }
+}
+
 onMounted(() => {
   loadTasks()
   loadDatasets()
   loadJudgeModels()
+  loadConverters()
+  loadPrompts()
 })
 
 async function loadDatasets() {

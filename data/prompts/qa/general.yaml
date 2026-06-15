@@ -1,0 +1,66 @@
+# Prompt 库：通用问答
+library: qa_general
+description: 通用知识问答类 Prompt
+version: "1.0"
+
+prompts:
+  - id: qa_001
+    name: 基础地理知识
+    template: "中国的首都是哪里？"
+    category: qa
+    tags: [knowledge, geography, easy, chinese]
+    evaluation:
+      primary:
+        type: keyword_match
+        keywords: ["北京", "北京市"]
+    metadata:
+      author: test_team
+      created_at: "2024-01-15"
+      description: 测试基础地理知识
+
+  - id: qa_002
+    name: 世界地理知识
+    template: "美国的首都是哪里？"
+    category: qa
+    tags: [knowledge, geography, easy]
+    evaluation:
+      primary:
+        type: keyword_match
+        keywords: ["华盛顿", "Washington"]
+    metadata:
+      author: test_team
+      created_at: "2024-01-15"
+
+  - id: qa_003
+    name: 哲学思考
+    template: "哲学能为人类做什么？"
+    category: qa
+    tags: [knowledge, philosophy, reasoning]
+    evaluation:
+      primary:
+        type: llm_judge
+        criteria:
+          - scientific
+          - logical
+          - comprehensive
+    metadata:
+      author: test_team
+      created_at: "2024-01-15"
+
+  - id: qa_004
+    name: 带变量的问答
+    template: "{country}的首都是哪里？"
+    category: qa
+    tags: [knowledge, geography, variable]
+    variables:
+      country:
+        type: string
+        description: 国家名称
+    evaluation:
+      primary:
+        type: keyword_match
+        keywords: []
+    metadata:
+      author: test_team
+      created_at: "2024-01-15"
+      note: 需要传入 country 变量

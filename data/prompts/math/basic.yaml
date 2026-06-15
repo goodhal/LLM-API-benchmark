@@ -1,0 +1,49 @@
+# Prompt 库：基础数学
+library: math_basic
+description: 基础数学计算类 Prompt
+version: "1.0"
+
+prompts:
+  - id: math_001
+    name: 简单加法
+    template: "1+1等于几？"
+    category: math
+    tags: [math, addition, elementary]
+    evaluation:
+      primary:
+        type: keyword_match
+        keywords: ["2", "两"]
+    metadata:
+      author: test_team
+      created_at: "2024-01-15"
+
+  - id: math_002
+    name: 乘法计算
+    template: "3×7等于多少？"
+    category: math
+    tags: [math, multiplication, elementary]
+    evaluation:
+      primary:
+        type: keyword_match
+        keywords: ["21"]
+    metadata:
+      author: test_team
+      created_at: "2024-01-15"
+
+  - id: math_003
+    name: 数学推理
+    template: "一个长方形的长是8厘米，宽是5厘米，它的面积是多少？"
+    category: math
+    tags: [math, geometry, reasoning]
+    evaluation:
+      primary:
+        type: keyword_match
+        keywords: ["40", "40平方厘米"]
+      secondary:
+        type: llm_judge
+        criteria:
+          - calculation_correct
+          - unit_correct
+    metadata:
+      author: test_team
+      created_at: "2024-01-15"

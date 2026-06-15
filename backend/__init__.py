@@ -46,17 +46,22 @@ def create_app(config_name='default'):
     from .routes.results import results_bp
     from .routes.compare import compare_bp
     from .routes.judge import judge_bp
+    from .routes.converters import converters_bp
+    from .routes.prompts import prompts_bp
     
     app.register_blueprint(auth_bp, url_prefix='/api/auth')
     app.register_blueprint(tasks_bp, url_prefix='/api/tasks')
     app.register_blueprint(results_bp, url_prefix='/api/results')
     app.register_blueprint(compare_bp, url_prefix='/api/compare')
     app.register_blueprint(judge_bp, url_prefix='/api/judge')
+    app.register_blueprint(converters_bp, url_prefix='/api/converters')
+    app.register_blueprint(prompts_bp, url_prefix='/api/prompts')
     
     # 创建数据库表和初始用户
     with app.app_context():
         db.create_all()
         _safe_migrate_perf_columns(app)
+        _safe_migrate_new_columns(app)
         create_initial_admin(app)
     
     # 初始化调度器
@@ -109,6 +114,40 @@ def _safe_migrate_perf_columns(app):
             conn.commit()
     except Exception as e:
         app.logger.debug(f"Migration check skipped or failed: {e}")
+
+
+def _safe_migrate_new_columns(app):
+    """安全地为 tasks 和 quality_test_results 表添加新列（PyRIT 集成 / 新特性）"""
+    import sqlalchemy as sa
+    try:
+        engine = db.engine
+        inspector = sa.inspect(engine)
+
+        # tasks 表：labels_json / threshold_json / prompt_config_json
+        task_columns = {col['name'] for col in inspector.get_columns('tasks')}
+        task_new = {
+            'labels_json': 'TEXT',
+            'threshold_json': 'TEXT',
+            'prompt_config_json': 'TEXT',
+        }
+        for col_name, col_type in task_new.items():
+            if col_name not in task_columns:
+                with engine.connect() as conn:
+                    conn.execute(sa.text(
+                        f'ALTER TABLE tasks ADD COLUMN {col_name} {col_type}'
+                    ))
+                    conn.commit()
+
+        # quality_test_results 表：enhanced_scores_json
+        qt_columns = {col['name'] for col in inspector.get_columns('quality_test_results')}
+        if 'enhanced_scores_json' not in qt_columns:
+            with engine.connect() as conn:
+                conn.execute(sa.text(
+                    'ALTER TABLE quality_test_results ADD COLUMN enhanced_scores_json TEXT'
+                ))
+                conn.commit()
+    except Exception as e:
+        app.logger.debug(f"PyRIT integration migration skipped or failed: {e}")
 
 
 def setup_logging(app):

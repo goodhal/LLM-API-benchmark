@@ -9,6 +9,8 @@ import QualityEvalResults from '@/views/QualityEvalResults.vue'
 import AvailabilityMonitor from '@/views/AvailabilityMonitor.vue'
 import ModelCompare from '@/views/ModelCompare.vue'
 import SystemMonitor from '@/views/SystemMonitor.vue'
+import ConsistencyResults from '@/views/ConsistencyResults.vue'
+import RegressionResults from '@/views/RegressionResults.vue'
 
 const routes = [
   {
@@ -61,6 +63,16 @@ const routes = [
         path: 'system-monitor',
         name: 'SystemMonitor',
         component: SystemMonitor
+      },
+      {
+        path: 'consistency-results',
+        name: 'ConsistencyResults',
+        component: ConsistencyResults
+      },
+      {
+        path: 'regression-results',
+        name: 'RegressionResults',
+        component: RegressionResults
       }
     ]
   }

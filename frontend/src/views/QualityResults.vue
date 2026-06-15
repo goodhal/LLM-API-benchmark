@@ -37,6 +37,41 @@
       </el-form>
 
       <el-table :data="auditResults" style="width: 100%" border stripe>
+        <el-table-column type="expand">
+          <template #default="{ row }">
+            <div v-if="row.enhanced_scores" class="enhanced-scores-panel">
+              <h4>增强评分详情（PyRIT 多维度评分体系）</h4>
+              <el-descriptions :column="3" border>
+                <el-descriptions-item label="总样本数">{{ row.enhanced_scores.total_samples }}</el-descriptions-item>
+                <el-descriptions-item label="拒答次数">{{ row.enhanced_scores.refusal_count }}</el-descriptions-item>
+                <el-descriptions-item label="拒答率">
+                  {{ row.enhanced_scores.total_samples > 0
+                    ? (row.enhanced_scores.refusal_count / row.enhanced_scores.total_samples * 100).toFixed(1) + '%'
+                    : 'N/A' }}
+                </el-descriptions-item>
+              </el-descriptions>
+              <h5 style="margin-top: 12px;">平均评分</h5>
+              <el-descriptions :column="3" border>
+                <el-descriptions-item
+                  v-for="(val, key) in row.enhanced_scores.avg_scores"
+                  :key="key"
+                  :label="key"
+                >{{ val.toFixed(4) }}</el-descriptions-item>
+              </el-descriptions>
+              <h5 style="margin-top: 12px;">伤害类别分布</h5>
+              <el-descriptions :column="3" border>
+                <el-descriptions-item
+                  v-for="(count, cat) in row.enhanced_scores.harm_categories"
+                  :key="cat"
+                  :label="cat"
+                >{{ count }}</el-descriptions-item>
+              </el-descriptions>
+            </div>
+            <div v-else style="padding: 20px; color: #999;">
+              无增强评分数据（此结果由标准 audit.py 生成）
+            </div>
+          </template>
+        </el-table-column>
         <el-table-column prop="execution_time" label="执行时间" min-width="140">
           <template #default="{ row }">
             {{ formatDate(row.execution_time) }}

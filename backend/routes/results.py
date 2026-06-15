@@ -1480,3 +1480,73 @@ function toggleDetail(i) {{
 </html>'''
 
     return html, 200, {'Content-Type': 'text/html; charset=utf-8'}
+
+
+# ============================================================
+# 一致性测试结果
+# ============================================================
+
+@results_bp.route('/consistency', methods=['GET'])
+@login_required
+def get_consistency_results():
+    """获取一致性测试结果"""
+    from ..models import ConsistencyTestResult
+    task_id = request.args.get('task_id', type=int)
+    limit = request.args.get('limit', 100, type=int)
+
+    query = ConsistencyTestResult.query
+    if task_id:
+        query = query.filter_by(task_id=task_id)
+
+    results = query.order_by(ConsistencyTestResult.execution_time.desc()).limit(limit).all()
+    return jsonify({'results': [r.to_dict() for r in results]}), 200
+
+
+@results_bp.route('/consistency/<int:result_id>', methods=['GET', 'DELETE'])
+@login_required
+def consistency_result_handler(result_id):
+    """获取/删除一致性测试结果"""
+    from ..models import db, ConsistencyTestResult
+    result = ConsistencyTestResult.query.get_or_404(result_id)
+
+    if request.method == 'DELETE':
+        db.session.delete(result)
+        db.session.commit()
+        return jsonify({'message': 'Deleted'}), 200
+
+    return jsonify({'result': result.to_dict()}), 200
+
+
+# ============================================================
+# 回归测试结果
+# ============================================================
+
+@results_bp.route('/regression', methods=['GET'])
+@login_required
+def get_regression_results():
+    """获取回归测试结果"""
+    from ..models import RegressionTestResult
+    task_id = request.args.get('task_id', type=int)
+    limit = request.args.get('limit', 100, type=int)
+
+    query = RegressionTestResult.query
+    if task_id:
+        query = query.filter_by(task_id=task_id)
+
+    results = query.order_by(RegressionTestResult.execution_time.desc()).limit(limit).all()
+    return jsonify({'results': [r.to_dict() for r in results]}), 200
+
+
+@results_bp.route('/regression/<int:result_id>', methods=['GET', 'DELETE'])
+@login_required
+def regression_result_handler(result_id):
+    """获取/删除回归测试结果"""
+    from ..models import db, RegressionTestResult
+    result = RegressionTestResult.query.get_or_404(result_id)
+
+    if request.method == 'DELETE':
+        db.session.delete(result)
+        db.session.commit()
+        return jsonify({'message': 'Deleted'}), 200
+
+    return jsonify({'result': result.to_dict()}), 200

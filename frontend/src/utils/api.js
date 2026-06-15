@@ -126,4 +126,32 @@ export const logAPI = {
   getQualityEvalLog: (resultId) => api.get(`/results/quality-eval/${resultId}/log`),
 }
 
+// 变换器 API
+export const converterAPI = {
+  getConverters: () => api.get('/converters/'),
+  getConverterTags: () => api.get('/converters/tags'),
+}
+
+// Prompt 库 API
+export const promptAPI = {
+  listPrompts: (params) => api.get('/prompts/', { params }),
+  getPrompt: (ref) => api.get(`/prompts/${ref}`),
+  listLibraries: () => api.get('/prompts/libraries'),
+  listCategories: () => api.get('/prompts/categories'),
+}
+
+// 一致性测试结果 API
+export const consistencyAPI = {
+  getResults: (params) => api.get('/results/consistency', { params }),
+  getResult: (id) => api.get(`/results/consistency/${id}`),
+  deleteResult: (id) => api.delete(`/results/consistency/${id}`),
+}
+
+// 回归测试结果 API
+export const regressionAPI = {
+  getResults: (params) => api.get('/results/regression', { params }),
+  getResult: (id) => api.get(`/results/regression/${id}`),
+  deleteResult: (id) => api.delete(`/results/regression/${id}`),
+}
+
 export default api

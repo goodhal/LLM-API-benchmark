@@ -62,6 +62,15 @@ class Task(db.Model):
     last_run_time = db.Column(db.DateTime)  # 最后执行时间
     next_run_time = db.Column(db.DateTime)  # 下次执行时间
     
+    # Memory Labels（借鉴 PyRIT 标签系统，JSON 格式自由标签，用于分类检索）
+    labels_json = db.Column(db.Text)  # JSON: {"harm_category": "jailbreak", "operator": "team_a"}
+
+    # 阈值配置（JSON: {"accuracy": 0.8, "consistency": 0.9, "latency_increase": 1.2}）
+    threshold_json = db.Column(db.Text)
+
+    # Prompt 引用配置（JSON: ["qa/general.yaml#qa_001", ...]）
+    prompt_config_json = db.Column(db.Text)
+    
     created_at = db.Column(db.DateTime, default=datetime.now)
     updated_at = db.Column(db.DateTime, default=datetime.now, onupdate=datetime.now)
     
@@ -74,8 +83,19 @@ class Task(db.Model):
                                           cascade='all, delete-orphan')
     quality_eval_results = db.relationship('QualityEvalResult', backref='task', lazy='dynamic',
                                            cascade='all, delete-orphan')
+    consistency_results = db.relationship('ConsistencyTestResult', backref='task', lazy='dynamic',
+                                          cascade='all, delete-orphan')
+    regression_results = db.relationship('RegressionTestResult', backref='task', lazy='dynamic',
+                                         cascade='all, delete-orphan')
     
     def to_dict(self):
+        labels = {}
+        if self.labels_json:
+            try:
+                import json as _json
+                labels = _json.loads(self.labels_json)
+            except Exception:
+                pass
         return {
             'id': self.id,
             'name': self.name,
@@ -90,6 +110,9 @@ class Task(db.Model):
             'status': self.status,
             'last_run_time': self.last_run_time.isoformat() if self.last_run_time else None,
             'next_run_time': self.next_run_time.isoformat() if self.next_run_time else None,
+            'labels': labels,
+            'threshold_json': self.threshold_json,
+            'prompt_config_json': self.prompt_config_json,
             'created_at': self.created_at.isoformat(),
             'updated_at': self.updated_at.isoformat()
         }
@@ -226,6 +249,9 @@ class QualityTestResult(db.Model):
     output_file = db.Column(db.String(500))  # 原始输出文件路径
     report_file = db.Column(db.String(500))  # 报告文件路径
     
+    # 增强评分（借鉴 PyRIT 多维度评分体系）
+    enhanced_scores_json = db.Column(db.Text)  # JSON: refusal/likert/category 等评分结果
+    
     # 状态
     status = db.Column(db.String(20), default='success')  # 'success', 'failed'
     error_message = db.Column(db.Text)  # 错误信息
@@ -235,7 +261,15 @@ class QualityTestResult(db.Model):
     def to_dict(self):
         # 从关联的 Task 获取任务名称
         task_name = self.task.name if self.task else None
-        
+
+        enhanced_scores = None
+        if self.enhanced_scores_json:
+            try:
+                import json as _json
+                enhanced_scores = _json.loads(self.enhanced_scores_json)
+            except Exception:
+                pass
+
         return {
             'id': self.id,
             'task_id': self.task_id,
@@ -258,6 +292,7 @@ class QualityTestResult(db.Model):
             'report_file': self.report_file,
             'status': self.status,
             'error_message': self.error_message,
+            'enhanced_scores': enhanced_scores,
             'created_at': self.created_at.isoformat()
         }
 
@@ -400,4 +435,116 @@ class JudgeModel(db.Model):
             'model': self.model,
             'created_at': self.created_at.isoformat(),
             'updated_at': self.updated_at.isoformat()
+        }
+
+
+class ConsistencyTestResult(db.Model):
+    """一致性测试结果表 - 同一 Prompt 多次调用检测输出稳定性"""
+    __tablename__ = 'consistency_test_results'
+
+    id = db.Column(db.Integer, primary_key=True)
+    task_id = db.Column(db.Integer, db.ForeignKey('tasks.id'), nullable=False)
+
+    execution_time = db.Column(db.DateTime, nullable=False)
+    prompt_ref = db.Column(db.String(500), nullable=False)  # 引用的 Prompt ref
+    model_name = db.Column(db.String(200), nullable=False)
+    provider = db.Column(db.String(100))
+
+    # 一致性指标
+    iterations = db.Column(db.Integer, default=1)
+    similarity_mean = db.Column(db.Float)  # 平均语义相似度
+    similarity_min = db.Column(db.Float)  # 最低相似度
+    responses_json = db.Column(db.Text)  # 所有迭代的响应 JSON
+    passed = db.Column(db.Boolean, default=False)  # 是否通过一致性阈值
+
+    status = db.Column(db.String(20), default='success')
+    error_message = db.Column(db.Text)
+    created_at = db.Column(db.DateTime, default=datetime.now)
+
+    def to_dict(self):
+        import json as _json
+        task_name = self.task.name if self.task else None
+        responses = None
+        if self.responses_json:
+            try:
+                responses = _json.loads(self.responses_json)
+            except Exception:
+                pass
+        return {
+            'id': self.id,
+            'task_id': self.task_id,
+            'task_name': task_name,
+            'execution_time': self.execution_time.isoformat(),
+            'prompt_ref': self.prompt_ref,
+            'model_name': self.model_name,
+            'provider': self.provider,
+            'iterations': self.iterations,
+            'similarity_mean': self.similarity_mean,
+            'similarity_min': self.similarity_min,
+            'responses': responses,
+            'passed': self.passed,
+            'status': self.status,
+            'error_message': self.error_message,
+            'created_at': self.created_at.isoformat()
+        }
+
+
+class RegressionTestResult(db.Model):
+    """回归测试结果表 - 对比 baseline 检测模型退化"""
+    __tablename__ = 'regression_test_results'
+
+    id = db.Column(db.Integer, primary_key=True)
+    task_id = db.Column(db.Integer, db.ForeignKey('tasks.id'), nullable=False)
+
+    execution_time = db.Column(db.DateTime, nullable=False)
+    model_name = db.Column(db.String(200), nullable=False)
+    provider = db.Column(db.String(100))
+
+    # 回归对比指标
+    baseline_avg_score = db.Column(db.Float)  # 基线平均分
+    current_avg_score = db.Column(db.Float)  # 当前平均分
+    score_delta = db.Column(db.Float)  # 分数变化
+    baseline_avg_latency = db.Column(db.Float)  # 基线平均延迟
+    current_avg_latency = db.Column(db.Float)  # 当前平均延迟
+    latency_ratio = db.Column(db.Float)  # 延迟比（当前/基线）
+
+    # 退化检测
+    accuracy_degraded = db.Column(db.Boolean, default=False)
+    latency_degraded = db.Column(db.Boolean, default=False)
+    passed = db.Column(db.Boolean, default=False)
+
+    detail_json = db.Column(db.Text)  # 详细逐样本对比 JSON
+    status = db.Column(db.String(20), default='success')
+    error_message = db.Column(db.Text)
+    created_at = db.Column(db.DateTime, default=datetime.now)
+
+    def to_dict(self):
+        import json as _json
+        task_name = self.task.name if self.task else None
+        detail = None
+        if self.detail_json:
+            try:
+                detail = _json.loads(self.detail_json)
+            except Exception:
+                pass
+        return {
+            'id': self.id,
+            'task_id': self.task_id,
+            'task_name': task_name,
+            'execution_time': self.execution_time.isoformat(),
+            'model_name': self.model_name,
+            'provider': self.provider,
+            'baseline_avg_score': self.baseline_avg_score,
+            'current_avg_score': self.current_avg_score,
+            'score_delta': self.score_delta,
+            'baseline_avg_latency': self.baseline_avg_latency,
+            'current_avg_latency': self.current_avg_latency,
+            'latency_ratio': self.latency_ratio,
+            'accuracy_degraded': self.accuracy_degraded,
+            'latency_degraded': self.latency_degraded,
+            'passed': self.passed,
+            'detail': detail,
+            'status': self.status,
+            'error_message': self.error_message,
+            'created_at': self.created_at.isoformat()
         }

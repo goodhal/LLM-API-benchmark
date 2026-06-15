@@ -1,0 +1,42 @@
+# 测试套件参考：一致性测试
+# 
+# 本文件为参考模板，展示一致性测试的配置方式。
+# 实际使用时通过前端"任务管理"页面创建 consistency_test 任务，
+# 选择 Prompt、设置迭代次数和阈值即可。
+#
+# 前端配置项对应关系：
+#   iterations   → 迭代次数
+#   thresholds.consistency → 一致性阈值 (默认 0.8)
+#   prompt_refs  → 选择的 Prompt 引用列表
+
+suite_id: consistency_v1
+name: 模型一致性测试套件
+description: |
+  测试模型对相同 Prompt 多次调用的输出稳定性。
+  适用于评估模型的确定性行为。
+
+type: consistency
+
+prompts:
+  - ref: qa/general.yaml#qa_001
+  - ref: math/basic.yaml#math_001
+  - ref: math/basic.yaml#math_002
+
+execution:
+  consistency:
+    enabled: true
+    iterations: 5
+    temperature: 0
+    threshold: 0.8
+
+evaluation:
+  evaluators:
+    - type: consistency_check
+      method: semantic_similarity
+      threshold: 0.8
+
+metadata:
+  author: test_team
+  created_at: "2024-01-15"
+  priority: P1
+  tags: [consistency, stability]

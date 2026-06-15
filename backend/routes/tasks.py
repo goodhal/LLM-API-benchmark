@@ -80,8 +80,8 @@ def create_task():
             return jsonify({'error': f'Missing required field: {field}'}), 400
     
     # 验证任务类型
-    if data['task_type'] not in ['perf_test', 'safety_audit', 'quality_eval', 'availability_test']:
-        return jsonify({'error': 'Invalid task_type, must be perf_test, safety_audit, quality_eval or availability_test'}), 400
+    if data['task_type'] not in ['perf_test', 'safety_audit', 'quality_eval', 'availability_test', 'consistency_test', 'regression_test']:
+        return jsonify({'error': 'Invalid task_type, must be perf_test, safety_audit, quality_eval, availability_test, consistency_test or regression_test'}), 400
     
     # 验证配置
     try:
@@ -99,6 +99,18 @@ def create_task():
         interval_seconds=data.get('interval_seconds'),
         is_enabled=data.get('is_enabled', False)
     )
+
+    # Memory Labels（借鉴 PyRIT 自由标签系统）
+    if 'labels' in data and data['labels']:
+        task.labels_json = json.dumps(data['labels']) if isinstance(data['labels'], dict) else data['labels']
+
+    # 阈值配置
+    if 'threshold_json' in data and data['threshold_json']:
+        task.threshold_json = data['threshold_json'] if isinstance(data['threshold_json'], str) else json.dumps(data['threshold_json'])
+
+    # Prompt 引用配置
+    if 'prompt_config_json' in data and data['prompt_config_json']:
+        task.prompt_config_json = data['prompt_config_json'] if isinstance(data['prompt_config_json'], str) else json.dumps(data['prompt_config_json'])
     
     # 处理时间字段
     if data.get('start_time'):
@@ -155,6 +167,13 @@ def update_task(task_id):
     was_enabled = task.is_enabled
     if 'is_enabled' in data:
         task.is_enabled = data['is_enabled']
+
+    # Memory Labels
+    if 'labels' in data:
+        if data['labels']:
+            task.labels_json = json.dumps(data['labels']) if isinstance(data['labels'], dict) else data['labels']
+        else:
+            task.labels_json = None
     
     db.session.commit()
     
@@ -249,7 +268,9 @@ def get_task_output_content(task_id):
         'perf_test': 'perf_',
         'safety_audit': 'safety_',
         'quality_eval': 'quality_eval_',
-        'availability_test': 'availability_'
+        'availability_test': 'availability_',
+        'consistency_test': 'consistency_',
+        'regression_test': 'regression_'
     }
     prefix = prefix_map.get(task.task_type, '')
     

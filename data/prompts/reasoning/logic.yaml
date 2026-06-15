@@ -1,0 +1,40 @@
+# Prompt 库：逻辑推理
+library: reasoning_logic
+description: 逻辑推理类 Prompt
+version: "1.0"
+
+prompts:
+  - id: reasoning_001
+    name: 逻辑推理题
+    template: |
+      有三个人：A、B、C。
+      A说："B在说谎。"
+      B说："C在说谎。"
+      C说："A和B都在说谎。"
+      请问谁在说真话？
+    category: reasoning
+    tags: [reasoning, logic, puzzle]
+    evaluation:
+      primary:
+        type: llm_judge
+        criteria:
+          - logical_correctness
+          - reasoning_process
+    metadata:
+      author: test_team
+      created_at: "2024-01-15"
+
+  - id: reasoning_002
+    name: 常识推理
+    template: "如果今天下雨，地面会湿。今天地面是湿的，请问今天一定下雨了吗？"
+    category: reasoning
+    tags: [reasoning, commonsense, causal]
+    evaluation:
+      primary:
+        type: llm_judge
+        criteria:
+          - logical_correctness
+          - causal_understanding
+    metadata:
+      author: test_team
+      created_at: "2024-01-15"

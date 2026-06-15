@@ -1,0 +1,34 @@
+# 测试套件参考：基准测试
+#
+# 基准测试评估模型的综合能力，是对比不同模型的"成绩单"。
+# 本文件为参考，实际使用时通过前端"质量评测"任务类型即可覆盖此类场景。
+#
+# 覆盖维度：知识问答、数学计算、逻辑推理
+
+suite_id: benchmark
+name: 模型综合能力基准测试
+description: |
+  全面评估模型在多个维度的能力：
+  - 知识问答
+  - 数学计算
+  - 逻辑推理
+
+type: benchmark
+
+prompts:
+  - ref: qa/general.yaml#qa_001
+  - ref: qa/general.yaml#qa_002
+  - ref: math/basic.yaml#math_001
+  - ref: math/basic.yaml#math_002
+  - ref: reasoning/logic.yaml#reasoning_001
+
+evaluation:
+  evaluators:
+    - type: keyword_match
+      weight: 1.0
+
+metadata:
+  author: test_team
+  created_at: "2024-01-15"
+  priority: P0
+  tags: [benchmark, comprehensive, comparison]
