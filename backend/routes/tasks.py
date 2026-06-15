@@ -80,8 +80,8 @@ def create_task():
             return jsonify({'error': f'Missing required field: {field}'}), 400
     
     # 验证任务类型
-    if data['task_type'] not in ['perf_test', 'quality_test', 'quality_eval', 'availability_test']:
-        return jsonify({'error': 'Invalid task_type, must be perf_test, quality_test, quality_eval or availability_test'}), 400
+    if data['task_type'] not in ['perf_test', 'safety_audit', 'quality_eval', 'availability_test']:
+        return jsonify({'error': 'Invalid task_type, must be perf_test, safety_audit, quality_eval or availability_test'}), 400
     
     # 验证配置
     try:

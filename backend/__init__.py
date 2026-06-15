@@ -56,6 +56,7 @@ def create_app(config_name='default'):
     # 创建数据库表和初始用户
     with app.app_context():
         db.create_all()
+        _safe_migrate_perf_columns(app)
         create_initial_admin(app)
     
     # 初始化调度器
@@ -81,6 +82,33 @@ def create_app(config_name='default'):
         return app.send_static_file('index.html')
     
     return app
+
+
+def _safe_migrate_perf_columns(app):
+    """安全地为 perf_test_results 表添加新列（参考 GuideLLM 扩展指标）"""
+    import sqlalchemy as sa
+    try:
+        engine = db.engine
+        inspector = sa.inspect(engine)
+        columns = {col['name'] for col in inspector.get_columns('perf_test_results')}
+        new_columns = [
+            ('percentiles_json', 'TEXT'),
+            ('latency_stats_json', 'TEXT'),
+            ('schedule_mode', 'VARCHAR(30)'),
+            ('total_requests', 'INTEGER'),
+            ('success_requests', 'INTEGER'),
+            ('error_requests', 'INTEGER'),
+            ('elapsed_seconds', 'FLOAT'),
+        ]
+        with engine.connect() as conn:
+            for col_name, col_type in new_columns:
+                if col_name not in columns:
+                    conn.execute(sa.text(
+                        f'ALTER TABLE perf_test_results ADD COLUMN {col_name} {col_type}'
+                    ))
+            conn.commit()
+    except Exception as e:
+        app.logger.debug(f"Migration check skipped or failed: {e}")
 
 
 def setup_logging(app):

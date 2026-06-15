@@ -217,25 +217,37 @@ class TaskExecutor:
         os.makedirs(os.path.dirname(env['MODELSCOPE_CREDENTIALS_PATH']), exist_ok=True)
         os.makedirs(env['MODELSCOPE_CACHE'], exist_ok=True)
         
-        # 执行命令，stdout 直接写入文件
+        # 使用 Popen 逐 chunk 读取 + 立即 flush——彻底绕过子进程缓冲问题
         timeout = app.config.get('TASK_TIMEOUT', 3600)
-        try:
-            with open(filepath, 'w', encoding='utf-8') as f:
-                result = subprocess.run(
-                    cmd,
-                    stdout=f,
-                    stderr=subprocess.STDOUT,
-                    text=True,
-                    env=env,
-                    timeout=timeout
-                )
-        except subprocess.TimeoutExpired:
-            app.logger.error(f"Task {task.id} timed out after {timeout}s")
-            return None
-        
-        # 读取输出用于解析
-        with open(filepath, 'r', encoding='utf-8') as f:
-            output = f.read()
+        result = None
+        output_chunks = []
+        start_time = time_module.time()
+        with open(filepath, 'wb') as f:
+            proc = subprocess.Popen(
+                cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                env=env,
+            )
+            while proc.poll() is None:
+                elapsed = time_module.time() - start_time
+                if elapsed > timeout:
+                    proc.kill()
+                    proc.wait()
+                    app.logger.error(f"Task {task.id} timed out after {timeout}s")
+                    return None
+                chunk = proc.stdout.read1()
+                if chunk:
+                    f.write(chunk)
+                    f.flush()
+                    output_chunks.append(chunk)
+            remaining = proc.stdout.read()
+            if remaining:
+                f.write(remaining)
+                f.flush()
+                output_chunks.append(remaining)
+            result = proc
+        output = b''.join(output_chunks).decode('utf-8', errors='replace')
 
         app.logger.info(f"[Task {task.id}] Process exited with rc={result.returncode}, output length={len(output)}")
 
@@ -303,7 +315,35 @@ class TaskExecutor:
             'max_tokens': config.get('max_tokens', 128),
             'connect_timeout': config.get('connect_timeout', 60),
             'read_timeout': config.get('read_timeout', 120),
+            # 调度策略（参考 GuideLLM）
+            'schedule_mode': config.get('schedule_mode', 'concurrent'),
+            'rate': config.get('rate', 0),
+            # 约束条件
+            'max_duration': config.get('max_duration'),
+            'max_error_rate': config.get('max_error_rate'),
+            'over_saturation': config.get('over_saturation', False),
+            # trace replay 数据
+            'trace_data': config.get('trace_data'),
+            'time_scale': config.get('time_scale', 1.0),
         }
+        
+        # 合成数据配置（参考 GuideLLM 的 synthetic_text 数据源）
+        if config.get('synthetic_data'):
+            engine_config['synthetic_data'] = config['synthetic_data']
+        elif config.get('data_source') == 'synthetic':
+            # 从前端配置自动生成 synthetic_data 配置
+            engine_config['synthetic_data'] = {
+                'prompt_tokens': config.get('prompt_tokens', 256),
+                'prompt_tokens_stdev': config.get('prompt_tokens_stdev'),
+                'prompt_tokens_min': config.get('min_prompt_length'),
+                'prompt_tokens_max': config.get('max_prompt_length'),
+                'output_tokens': config.get('output_tokens', config.get('max_tokens', 128)),
+                'output_tokens_stdev': config.get('output_tokens_stdev'),
+                'output_tokens_min': config.get('min_tokens'),
+                'output_tokens_max': config.get('max_tokens'),
+                'source': config.get('synthetic_source', 'builtin'),
+                'templates': config.get('synthetic_templates'),
+            }
         
         # 如果有自定义 prompt
         if config.get('prompt'):
@@ -431,6 +471,30 @@ class TaskExecutor:
             perf_result.rps = result_data.get('rps')
             perf_result.gen_toks = result_data.get('gen_toks')
             perf_result.success_rate = result_data.get('success_rate')
+
+            # 保存扩展指标（参考 GuideLLM）
+            perf_result.schedule_mode = engine_config.get('schedule_mode', 'concurrent')
+            perf_result.total_requests = result_data.get('total_requests')
+            perf_result.success_requests = result_data.get('success_requests')
+            perf_result.error_requests = result_data.get('error_requests')
+            perf_result.elapsed_seconds = result_data.get('elapsed_seconds')
+
+            percentiles_data = {}
+            if result_data.get('percentiles_latency'):
+                percentiles_data['latency'] = result_data['percentiles_latency']
+            if result_data.get('percentiles_ttft'):
+                percentiles_data['ttft'] = result_data['percentiles_ttft']
+            if result_data.get('percentiles_tpot'):
+                percentiles_data['tpot'] = result_data['percentiles_tpot']
+            if percentiles_data:
+                perf_result.percentiles_json = json.dumps(percentiles_data, ensure_ascii=False)
+
+            if result_data.get('latency_stats'):
+                perf_result.latency_stats_json = json.dumps(result_data['latency_stats'], ensure_ascii=False)
+
+            if result_data.get('sweep_results'):
+                percentiles_data['sweep_results'] = result_data['sweep_results']
+                perf_result.percentiles_json = json.dumps(percentiles_data, ensure_ascii=False)
             
             db.session.add(perf_result)
             self._safe_commit()
@@ -563,8 +627,10 @@ class TaskExecutor:
                 predictions_list = []  # [(sample, prediction, api_error)]
                 for si, sample in enumerate(samples):
                     messages = []
+                    system_prompts = ['请确保回答的语言与问题的语言保持一致。']
                     if concise_mode:
-                        messages.append({'role': 'system', 'content': '请尽量简短地回答问题，只给出正确答案，不要解释或补充额外信息。'})
+                        system_prompts.append('请尽量简短地回答问题，只给出正确答案，不要解释或补充额外信息。')
+                    messages.append({'role': 'system', 'content': ' '.join(system_prompts)})
                     messages.append({'role': 'user', 'content': sample.prompt})
                     payload = {
                         'model': model,
@@ -818,12 +884,12 @@ class TaskExecutor:
         output_dir = Path(app.config['UPLOAD_FOLDER']) / f"task_{task.id}"
         output_dir.mkdir(parents=True, exist_ok=True)
         timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-        filename = f"quality_{timestamp}.txt"
+        filename = f"safety_{timestamp}.txt"
         filepath = output_dir / filename
         output_file = str(filepath)
         
-        # 报告文件路径（与日志文件同目录，命名为 quality_{timestamp}_report.md）
-        report_path = str(output_dir / f"quality_{timestamp}_report.md")
+        # 报告文件路径
+        report_path = str(output_dir / f"safety_{timestamp}_report.md")
         
         # 构建命令
         model_name = config.get('model', 'claude-opus-4-6')
@@ -852,22 +918,48 @@ class TaskExecutor:
         env['CLICOLOR'] = '0'
         env['TERM'] = 'dumb'
 
-        # 执行命令，stdout 直接写入文件
+        # 使用 Popen 逐 chunk 读取 + 立即 flush——彻底绕过子进程缓冲问题
         timeout = app.config.get('TASK_TIMEOUT', 3600)
-        with open(filepath, 'w', encoding='utf-8') as f:
-            result = subprocess.run(
+        result = None
+        output_chunks = []
+        start_time = time_module.time()
+        with open(filepath, 'wb') as f:
+            proc = subprocess.Popen(
                 cmd,
-                stdout=f,
+                stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
-                text=True,
                 cwd=work_dir,
                 env=env,
-                timeout=timeout
             )
-        
-        # 读取输出用于解析
-        with open(filepath, 'r', encoding='utf-8') as f:
-            output = f.read()
+            try:
+                while proc.poll() is None:
+                    elapsed = time_module.time() - start_time
+                    if elapsed > timeout:
+                        proc.kill()
+                        proc.wait()
+                        app.logger.error(f"Task {task.id} safety audit timed out after {timeout}s")
+                        break
+                    chunk = proc.stdout.read1()
+                    if chunk:
+                        f.write(chunk)
+                        f.flush()
+                        output_chunks.append(chunk)
+                # 读取进程退出后的残留数据
+                remaining = proc.stdout.read()
+                if remaining:
+                    f.write(remaining)
+                    f.flush()
+                    output_chunks.append(remaining)
+            except Exception as e:
+                app.logger.error(f"Task {task.id} safety audit error: {e}")
+                try:
+                    proc.kill()
+                    proc.wait()
+                except Exception:
+                    pass
+            result = proc
+
+        output = b''.join(output_chunks).decode('utf-8', errors='replace')
 
         # 检查进程返回码
         if result.returncode != 0:
@@ -1330,25 +1422,37 @@ class TaskExecutor:
         os.makedirs(os.path.dirname(env['MODELSCOPE_CREDENTIALS_PATH']), exist_ok=True)
         os.makedirs(env['MODELSCOPE_CACHE'], exist_ok=True)
         
-        # 执行命令
+        # 使用 Popen 逐 chunk 读取 + 立即 flush——彻底绕过子进程缓冲问题
         timeout = app.config.get('TASK_TIMEOUT', 3600)
-        try:
-            with open(filepath, 'w', encoding='utf-8') as f:
-                result = subprocess.run(
-                    cmd,
-                    stdout=f,
-                    stderr=subprocess.STDOUT,
-                    text=True,
-                    env=env,
-                    timeout=timeout
-                )
-        except subprocess.TimeoutExpired:
-            app.logger.error(f"Channel {channel_name} test timed out after {timeout}s")
-            raise Exception(f"Test timed out after {timeout}s")
-        
-        # 读取输出并解析性能指标
-        with open(filepath, 'r', encoding='utf-8') as f:
-            output = f.read()
+        result = None
+        output_chunks = []
+        start_time = time_module.time()
+        with open(filepath, 'wb') as f:
+            proc = subprocess.Popen(
+                cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                env=env,
+            )
+            while proc.poll() is None:
+                elapsed = time_module.time() - start_time
+                if elapsed > timeout:
+                    proc.kill()
+                    proc.wait()
+                    app.logger.error(f"Channel {channel_name} test timed out after {timeout}s")
+                    raise Exception(f"Test timed out after {timeout}s")
+                chunk = proc.stdout.read1()
+                if chunk:
+                    f.write(chunk)
+                    f.flush()
+                    output_chunks.append(chunk)
+            remaining = proc.stdout.read()
+            if remaining:
+                f.write(remaining)
+                f.flush()
+                output_chunks.append(remaining)
+            result = proc
+        output = b''.join(output_chunks).decode('utf-8', errors='replace')
         
         # 解析性能指标
         perf_result = self._parse_perf_output(output)

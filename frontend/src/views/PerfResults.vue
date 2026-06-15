@@ -141,6 +141,14 @@
             {{ row.concurrency || '-' }}
           </template>
         </el-table-column>
+
+        <el-table-column prop="schedule_mode" label="调度模式" width="100">
+          <template #default="{ row }">
+            <el-tag :type="getScheduleModeType(row.schedule_mode)" size="small">
+              {{ getScheduleModeLabel(row.schedule_mode) }}
+            </el-tag>
+          </template>
+        </el-table-column>
         
         <el-table-column prop="avg_latency" label="平均延迟" min-width="100">
           <template #default="{ row }">
@@ -180,9 +188,10 @@
           </template>
         </el-table-column>
         
-        <el-table-column label="操作" width="260" fixed="right">
+        <el-table-column label="操作" width="310" fixed="right">
           <template #default="{ row }">
             <el-button size="small" type="primary" @click="viewReport(row)">查看报告</el-button>
+            <el-button size="small" type="success" @click="viewDetail(row)">详情</el-button>
             <el-button size="small" @click="viewFile(row)">查看日志</el-button>
             <el-button size="small" type="danger" @click="deleteResult(row)">删除</el-button>
           </template>
@@ -193,6 +202,94 @@
     <!-- 日志查看对话框 -->
     <el-dialog v-model="logDialogVisible" title="执行日志" width="80%">
       <pre class="log-content">{{ logContent }}</pre>
+    </el-dialog>
+
+    <!-- 详细报告对话框 -->
+    <el-dialog v-model="detailDialogVisible" title="详细测试报告" width="700px">
+      <template v-if="detailResult">
+        <el-descriptions :column="2" border>
+          <el-descriptions-item label="任务名称">{{ detailResult.task_name || '-' }}</el-descriptions-item>
+          <el-descriptions-item label="模型名称">{{ detailResult.model_name || '-' }}</el-descriptions-item>
+          <el-descriptions-item label="执行时间">{{ formatDate(detailResult.execution_time) }}</el-descriptions-item>
+          <el-descriptions-item label="调度模式">
+            <el-tag :type="getScheduleModeType(detailResult.schedule_mode)" size="small">
+              {{ getScheduleModeLabel(detailResult.schedule_mode) }}
+            </el-tag>
+          </el-descriptions-item>
+          <el-descriptions-item label="并发数">{{ detailResult.concurrency || '-' }}</el-descriptions-item>
+          <el-descriptions-item label="总耗时">{{ detailResult.elapsed_seconds ? detailResult.elapsed_seconds.toFixed(2) + 's' : '-' }}</el-descriptions-item>
+          <el-descriptions-item label="总请求数">{{ detailResult.total_requests || '-' }}</el-descriptions-item>
+          <el-descriptions-item label="成功/失败">{{ detailResult.success_requests || 0 }} / {{ detailResult.error_requests || 0 }}</el-descriptions-item>
+          <el-descriptions-item label="成功率">
+            <el-tag :type="detailResult.success_rate >= 95 ? 'success' : 'danger'">
+              {{ detailResult.success_rate?.toFixed(1) }}%
+            </el-tag>
+          </el-descriptions-item>
+          <el-descriptions-item label="RPS">{{ detailResult.rps?.toFixed(2) }}</el-descriptions-item>
+          <el-descriptions-item label="生成速度">{{ detailResult.gen_toks?.toFixed(2) }} tok/s</el-descriptions-item>
+        </el-descriptions>
+
+        <!-- 核心指标 -->
+        <el-divider content-position="left">核心指标</el-divider>
+        <el-descriptions :column="2" border>
+          <el-descriptions-item label="平均延迟">{{ detailResult.avg_latency?.toFixed(3) }}s</el-descriptions-item>
+          <el-descriptions-item label="P99 延迟">{{ detailResult.p99_latency?.toFixed(3) }}s</el-descriptions-item>
+          <el-descriptions-item label="平均 TTFT">{{ detailResult.avg_ttft?.toFixed(2) }}ms</el-descriptions-item>
+          <el-descriptions-item label="P99 TTFT">{{ detailResult.p99_ttft?.toFixed(2) }}ms</el-descriptions-item>
+          <el-descriptions-item label="平均 TPOT">{{ detailResult.avg_tpot?.toFixed(2) }}ms</el-descriptions-item>
+          <el-descriptions-item label="P99 TPOT">{{ detailResult.p99_tpot?.toFixed(2) }}ms</el-descriptions-item>
+        </el-descriptions>
+
+        <!-- 延迟分布统计 -->
+        <template v-if="detailResult.latency_stats">
+          <el-divider content-position="left">延迟分布统计</el-divider>
+          <el-descriptions :column="3" border>
+            <el-descriptions-item label="均值">{{ detailResult.latency_stats.mean?.toFixed(4) }}s</el-descriptions-item>
+            <el-descriptions-item label="中位数">{{ detailResult.latency_stats.median?.toFixed(4) }}s</el-descriptions-item>
+            <el-descriptions-item label="标准差">{{ detailResult.latency_stats.std_dev?.toFixed(4) }}s</el-descriptions-item>
+            <el-descriptions-item label="最小值">{{ detailResult.latency_stats.min?.toFixed(4) }}s</el-descriptions-item>
+            <el-descriptions-item label="最大值">{{ detailResult.latency_stats.max?.toFixed(4) }}s</el-descriptions-item>
+            <el-descriptions-item label="样本数">{{ detailResult.latency_stats.count }}</el-descriptions-item>
+          </el-descriptions>
+        </template>
+
+        <!-- 完整百分位统计 -->
+        <template v-if="detailResult.percentiles?.latency">
+          <el-divider content-position="left">延迟百分位分布</el-divider>
+          <el-table :data="Object.entries(detailResult.percentiles.latency).map(([k, v]) => ({name: k, value: v}))" size="small" border>
+            <el-table-column prop="name" label="百分位" width="100" />
+            <el-table-column label="延迟 (秒)">
+              <template #default="{ row }">
+                {{ row.value?.toFixed(4) }}s
+              </template>
+            </el-table-column>
+          </el-table>
+        </template>
+
+        <template v-if="detailResult.percentiles?.ttft">
+          <el-divider content-position="left">TTFT 百分位分布</el-divider>
+          <el-table :data="Object.entries(detailResult.percentiles.ttft).map(([k, v]) => ({name: k, value: v}))" size="small" border>
+            <el-table-column prop="name" label="百分位" width="100" />
+            <el-table-column label="TTFT (ms)">
+              <template #default="{ row }">
+                {{ row.value?.toFixed(2) }}ms
+              </template>
+            </el-table-column>
+          </el-table>
+        </template>
+
+        <template v-if="detailResult.percentiles?.tpot">
+          <el-divider content-position="left">TPOT 百分位分布</el-divider>
+          <el-table :data="Object.entries(detailResult.percentiles.tpot).map(([k, v]) => ({name: k, value: v}))" size="small" border>
+            <el-table-column prop="name" label="百分位" width="100" />
+            <el-table-column label="TPOT (ms)">
+              <template #default="{ row }">
+                {{ row.value?.toFixed(2) }}ms
+              </template>
+            </el-table-column>
+          </el-table>
+        </template>
+      </template>
     </el-dialog>
   </div>
 </template>
@@ -561,6 +658,14 @@ const viewReport = (row) => {
   window.open(`/api/results/perf/${row.id}/view`, '_blank')
 }
 
+const viewDetail = (row) => {
+  detailResult.value = row
+  detailDialogVisible.value = true
+}
+
+const detailDialogVisible = ref(false)
+const detailResult = ref(null)
+
 const deleteResult = async (row) => {
   try {
     await ElMessageBox.confirm(
@@ -580,6 +685,30 @@ const deleteResult = async (row) => {
       console.error('Failed to delete result:', error)
     }
   }
+}
+
+const getScheduleModeLabel = (mode) => {
+  const map = {
+    'concurrent': '并发',
+    'constant_rate': '恒速',
+    'poisson': '泊松',
+    'throughput': '吞吐',
+    'sweep': '扫描',
+    'replay': '回放',
+  }
+  return map[mode] || '并发'
+}
+
+const getScheduleModeType = (mode) => {
+  const map = {
+    'concurrent': '',
+    'constant_rate': 'success',
+    'poisson': 'warning',
+    'throughput': 'danger',
+    'sweep': 'info',
+    'replay': '',
+  }
+  return map[mode] || ''
 }
 
 const formatDate = (date) => {

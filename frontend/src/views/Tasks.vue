@@ -147,22 +147,84 @@
             </el-radio-group>
             <div class="form-tip">Native 引擎支持实时指标和精确 TTFT/TPOT 测量</div>
           </el-form-item>
-          
-          <el-form-item label="最小提示长度">
-            <el-input-number v-model="taskForm.config.min_prompt_length" :min="1" :max="1000000" />
+
+          <el-form-item label="调度模式">
+            <el-select v-model="taskForm.config.schedule_mode" style="width: 100%">
+              <el-option label="固定并发 (concurrent)" value="concurrent" />
+              <el-option label="固定速率 (constant_rate)" value="constant_rate" />
+              <el-option label="泊松分布 (poisson)" value="poisson" />
+              <el-option label="最大吞吐 (throughput)" value="throughput" />
+              <el-option label="自适应扫描 (sweep)" value="sweep" />
+              <el-option label="追踪回放 (replay)" value="replay" />
+            </el-select>
+            <div class="form-tip">concurrent: 固定并发；constant_rate: 恒定QPS；poisson: 泊松分布；throughput: 最大吞吐量；sweep: 自动扫描最优区间；replay: 按trace回放</div>
           </el-form-item>
-          
-          <el-form-item label="最大提示长度">
-            <el-input-number v-model="taskForm.config.max_prompt_length" :min="1" :max="1000000" />
+
+          <el-form-item v-if="taskForm.config.schedule_mode === 'constant_rate' || taskForm.config.schedule_mode === 'poisson'" label="请求速率(QPS)">
+            <el-input-number v-model="taskForm.config.rate" :min="0.1" :max="10000" :step="1" :precision="1" />
           </el-form-item>
-          
+
+          <el-divider>数据源配置</el-divider>
+
+          <el-form-item label="数据源">
+            <el-select v-model="taskForm.config.data_source" style="width: 100%">
+              <el-option label="默认 Prompt 列表" value="default" />
+              <el-option label="合成数据生成" value="synthetic" />
+            </el-select>
+            <div class="form-tip">合成数据支持配置 prompt/output 长度分布，模拟真实场景</div>
+          </el-form-item>
+
+          <template v-if="taskForm.config.data_source === 'synthetic'">
+            <el-form-item label="平均提示Token数">
+              <el-input-number v-model="taskForm.config.prompt_tokens" :min="1" :max="100000" />
+            </el-form-item>
+
+            <el-form-item label="提示Token标准差">
+              <el-input-number v-model="taskForm.config.prompt_tokens_stdev" :min="0" :max="10000" />
+              <div class="form-tip">0 表示固定长度，越大表示长度波动越大</div>
+            </el-form-item>
+
+            <el-form-item label="平均生成Token数">
+              <el-input-number v-model="taskForm.config.output_tokens" :min="1" :max="100000" />
+            </el-form-item>
+          </template>
+
+          <template v-if="taskForm.config.data_source === 'default'">
+            <el-form-item label="最小提示长度">
+              <el-input-number v-model="taskForm.config.min_prompt_length" :min="1" :max="1000000" />
+            </el-form-item>
+
+            <el-form-item label="最大提示长度">
+              <el-input-number v-model="taskForm.config.max_prompt_length" :min="1" :max="1000000" />
+            </el-form-item>
+          </template>
+
           <el-form-item label="最小生成Token数">
             <el-input-number v-model="taskForm.config.min_tokens" :min="1" :max="1000000" />
           </el-form-item>
-          
+
           <el-form-item label="最大生成Token数">
             <el-input-number v-model="taskForm.config.max_tokens" :min="1" :max="1000000" />
           </el-form-item>
+
+          <el-divider>约束条件</el-divider>
+
+          <el-form-item label="最大时长(秒)">
+            <el-input-number v-model="taskForm.config.max_duration" :min="0" :max="86400" />
+            <div class="form-tip">0 表示不限制，超过时长自动停止测试</div>
+          </el-form-item>
+
+          <el-form-item label="最大错误率(%)">
+            <el-input-number v-model="taskForm.config.max_error_rate" :min="0" :max="100" />
+            <div class="form-tip">0 表示不限制，错误率超过阈值自动停止测试</div>
+          </el-form-item>
+
+          <el-form-item label="过饱和检测">
+            <el-switch v-model="taskForm.config.over_saturation" />
+            <div class="form-tip">启用后，当 TTFT 持续恶化时自动停止测试（参考 GuideLLM OSD 算法）</div>
+          </el-form-item>
+
+          <el-divider>超时配置</el-divider>
           
           <el-form-item label="连接超时(秒)">
             <el-input-number v-model="taskForm.config.connect_timeout" :min="1" :max="600" />
@@ -174,7 +236,7 @@
         </template>
         
         <!-- 安全审计配置 -->
-        <template v-if="taskForm.task_type === 'quality_test'">
+        <template v-if="taskForm.task_type === 'safety_audit'">
           <el-form-item label="API URL" prop="config.url">
             <el-input v-model="taskForm.config.url" placeholder="https://relay.example.com/v1" />
           </el-form-item>
@@ -545,6 +607,18 @@ const taskForm = reactive({
     connect_timeout: 60,
     read_timeout: 120,
     engine: 'evalscope',
+    // 调度策略（参考 GuideLLM）
+    schedule_mode: 'concurrent',
+    rate: 10,
+    // 数据源配置
+    data_source: 'default',
+    prompt_tokens: 256,
+    prompt_tokens_stdev: 0,
+    output_tokens: 128,
+    // 约束条件
+    max_duration: 0,
+    max_error_rate: 0,
+    over_saturation: false,
     channels: [
       { name: '渠道1', url: '', api_key: '', showPassword: false }
     ],
@@ -980,7 +1054,7 @@ const getTaskTypeLabel = (type) => {
 const getTaskTypeColor = (type) => {
   const colors = {
     perf_test: 'success',
-    quality_test: 'warning',
+    safety_audit: 'warning',
     quality_eval: 'danger',
     availability_test: 'primary'
   }

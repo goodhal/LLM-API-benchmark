@@ -118,6 +118,15 @@ class PerfTestResult(db.Model):
     gen_toks = db.Column(db.Float)  # 生成速度
     success_rate = db.Column(db.Float)  # 成功率
     
+    # 扩展指标（参考 GuideLLM，JSON 格式存储）
+    percentiles_json = db.Column(db.Text)  # 完整百分位统计 JSON
+    latency_stats_json = db.Column(db.Text)  # 延迟分布统计 JSON
+    schedule_mode = db.Column(db.String(30))  # 调度模式
+    total_requests = db.Column(db.Integer)  # 总请求数
+    success_requests = db.Column(db.Integer)  # 成功请求数
+    error_requests = db.Column(db.Integer)  # 错误请求数
+    elapsed_seconds = db.Column(db.Float)  # 总耗时（秒）
+    
     # 文件路径
     output_file = db.Column(db.String(500))  # 原始输出文件路径
     
@@ -131,15 +140,18 @@ class PerfTestResult(db.Model):
         # 从关联的 Task 获取任务名称和模型名称
         task_name = self.task.name if self.task else None
         model_name = None
+        schedule_mode = self.schedule_mode
         if self.task and self.task.config:
             try:
-                import json
-                config = json.loads(self.task.config)
+                import json as _json
+                config = _json.loads(self.task.config)
                 model_name = config.get('model')
+                if not schedule_mode:
+                    schedule_mode = config.get('schedule_mode', 'concurrent')
             except:
                 pass
-        
-        return {
+
+        result = {
             'id': self.id,
             'task_id': self.task_id,
             'task_name': task_name,
@@ -159,8 +171,30 @@ class PerfTestResult(db.Model):
             'output_file': self.output_file,
             'status': self.status,
             'error_message': self.error_message,
-            'created_at': self.created_at.isoformat()
+            'created_at': self.created_at.isoformat(),
+            # 扩展指标
+            'schedule_mode': schedule_mode or 'concurrent',
+            'total_requests': self.total_requests,
+            'success_requests': self.success_requests,
+            'error_requests': self.error_requests,
+            'elapsed_seconds': self.elapsed_seconds,
         }
+
+        # 解析 JSON 格式的扩展指标
+        if self.percentiles_json:
+            try:
+                import json as _json
+                result['percentiles'] = _json.loads(self.percentiles_json)
+            except:
+                pass
+        if self.latency_stats_json:
+            try:
+                import json as _json
+                result['latency_stats'] = _json.loads(self.latency_stats_json)
+            except:
+                pass
+
+        return result
 
 
 class QualityTestResult(db.Model):
