@@ -242,7 +242,10 @@ def get_task_output_file(task_id):
     # 根据任务类型查找文件
     prefix = 'perf_' if task.task_type == 'perf_test' else 'quality_'
     files = sorted(output_dir.glob(f"{prefix}*.txt"), reverse=True)
-    
+    # 同时搜索 .log 文件（增强审计模式产生 safety_enhanced_*.log）
+    log_files = sorted(output_dir.glob(f"{prefix}enhanced_*.log"), reverse=True)
+    files = sorted(files + log_files, key=lambda p: p.stat().st_mtime, reverse=True)
+
     if not files:
         return jsonify({'error': 'No output file found'}), 404
     
@@ -278,10 +281,13 @@ def get_task_output_content(task_id):
         return jsonify({'content': '', 'exists': False}), 200
     
     files = sorted(output_dir.glob(f"{prefix}*.txt"), reverse=True)
-    
+    # 同时搜索 .log 文件（增强审计模式产生 safety_enhanced_*.log）
+    log_files = sorted(output_dir.glob(f"{prefix}enhanced_*.log"), reverse=True)
+    files = sorted(files + log_files, key=lambda p: p.stat().st_mtime, reverse=True)
+
     if not files:
         return jsonify({'content': '', 'exists': False}), 200
-    
+
     try:
         with open(files[0], 'r', encoding='utf-8') as f:
             content = f.read()

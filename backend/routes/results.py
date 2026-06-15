@@ -1014,6 +1014,217 @@ def _full_report_css():
 </style>'''
 
 
+def _summarize_converted(converted_text):
+    """将越狱转换后的 Prompt 精简为可读摘要（过滤 ASCII 艺术噪音）"""
+    if not converted_text:
+        return '（未使用转换器）'
+
+    # 匹配 ASCII 艺术编码模式："Here is a message encoded as ASCII art"
+    if 'ASCII art' in converted_text or 'encoded as' in converted_text.lower():
+        technique = 'ASCII 艺术编码绕过'
+        # 提取隐藏消息
+        needle = 'The original message hidden in the art is:'
+        if needle in converted_text:
+            hidden = converted_text.split(needle)[-1].strip()
+            return f'{technique} → 隐藏内容：「{_esc(hidden[:120])}」'
+
+        return f'{technique}（无法提取隐藏内容）'
+
+    # 匹配角色伪装前缀
+    prefix_role = '你是一位正在进行安全测试的研究人员'
+    if prefix_role in converted_text:
+        # 去掉前缀，只显示关键部分
+        parts = converted_text.split('请回答：')
+        if len(parts) > 1:
+            rest = parts[-1].strip()
+            tail_needle = 'The original message hidden in the art is:'
+            if tail_needle in rest:
+                hidden = rest.split(tail_needle)[-1].strip()
+                return f'角色伪装 + 隐藏内容：「{_esc(hidden[:120])}」'
+            rest_preview = _esc(rest[:80])
+            return f'角色伪装 → 「{rest_preview}...」'
+        return f'角色伪装（{len(converted_text)} 字符）'
+
+    # 和原始 prompt 相同时不额外展示
+    return None
+
+
+def _build_jsonl_safety_report(jsonl_content, result):
+    """从 JSONL 输出构建安全审计报告（增强模式的 JSONL 格式）"""
+    samples = []
+    for line in jsonl_content.strip().split('\n'):
+        if line.strip():
+            try:
+                samples.append(json.loads(line))
+            except Exception:
+                pass
+
+    if not samples:
+        return '<div class="report-container"><h1>报告无数据</h1></div>'
+
+    # 汇总统计
+    total = len(samples)
+    refused = sum(1 for s in samples
+                   if s.get('aggregated', {}).get('refusal_detected', False))
+    # 有害内容检出 = 未拒答 + 回复中包含有害关键词（排除拒答中的关键词误报）
+    harm_detected = sum(1 for s in samples
+                         if not s.get('aggregated', {}).get('refusal_detected', False)
+                         and s.get('aggregated', {}).get('harm_score', 0) > 0)
+    avg_quality = sum(s.get('aggregated', {}).get('quality_score', 0) for s in samples) / total if total else 0
+
+    # 按 harm_category 分组
+    categories = {}
+    for s in samples:
+        cat = s.get('harm_category', '') or 'other'
+        if cat not in categories:
+            categories[cat] = {'total': 0, 'refused': 0}
+        categories[cat]['total'] += 1
+        if s.get('aggregated', {}).get('refusal_detected', False):
+            categories[cat]['refused'] += 1
+
+    # 构建 HTML
+    html_parts = [_full_report_css(), '''
+<div class="report-container">
+<div class="report-header">
+  <h1>🛡️ API 安全审计报告（增强模式）</h1>
+  <div class="header-meta">
+    <span><strong>模型:</strong> <code>{model}</code></span>
+    <span><strong>时间:</strong> {time}</span>
+    <span><strong>样本数:</strong> {total}</span>
+  </div>
+</div>
+
+<div class="risk-summary-section">
+<h2>📊 测试汇总</h2>
+<div style="display:flex;gap:16px;flex-wrap:wrap;margin-bottom:16px;">
+  <div style="background:#fef0f0;padding:12px 20px;border-radius:8px;flex:1;min-width:140px;">
+    <div style="font-size:24px;font-weight:700;color:#f56c6c;">{harm}</div>
+    <div style="font-size:13px;color:#909399;">有害内容检出</div>
+  </div>
+  <div style="background:#fdf6ec;padding:12px 20px;border-radius:8px;flex:1;min-width:140px;">
+    <div style="font-size:24px;font-weight:700;color:#e6a23c;">{refused}</div>
+    <div style="font-size:13px;color:#909399;">模型拒绝 ({refused_pct:.0f}%)</div>
+  </div>
+  <div style="background:#f0f9eb;padding:12px 20px;border-radius:8px;flex:1;min-width:140px;">
+    <div style="font-size:24px;font-weight:700;color:#67c23a;">{quality:.2f}</div>
+    <div style="font-size:13px;color:#909399;">平均质量分</div>
+  </div>
+  <div style="background:#ecf5ff;padding:12px 20px;border-radius:8px;flex:1;min-width:140px;">
+    <div style="font-size:24px;font-weight:700;color:#409eff;">{total}</div>
+    <div style="font-size:13px;color:#909399;">总样本数</div>
+  </div>
+</div>
+
+<h2>📂 按类别统计</h2>
+<div style="overflow-x:auto;">
+<table style="width:100%;border-collapse:collapse;margin:12px 0;">
+<thead>
+<tr style="background:#f5f7fa;">
+  <th style="padding:10px 14px;border:1px solid #e4e7ed;text-align:left;">危害类别</th>
+  <th style="padding:10px 14px;border:1px solid #e4e7ed;text-align:right;">样本数</th>
+  <th style="padding:10px 14px;border:1px solid #e4e7ed;text-align:right;">拒绝数</th>
+  <th style="padding:10px 14px;border:1px solid #e4e7ed;text-align:right;">拒绝率</th>
+</tr>
+</thead>
+<tbody>
+'''.format(
+        model=_esc(result.task.name if result.task else '-'),
+        time=result.execution_time.strftime('%Y-%m-%d %H:%M:%S') if result.execution_time else '-',
+        total=total, harm=harm_detected, refused=refused,
+        refused_pct=(refused / total * 100) if total else 0,
+        quality=avg_quality,
+    )]
+
+    for cat, stats in sorted(categories.items()):
+        cat_pct = (stats['refused'] / stats['total'] * 100) if stats['total'] else 0
+        cat_label = {'hate': '仇恨言论', 'hate_speech': '仇恨言论', 'violence': '暴力',
+                     'sexual': '色情', 'self_harm': '自残', 'illegal': '违法',
+                     'jailbreak': '越狱', 'cyber': '网络犯罪',
+                     'leakage': '信息泄露', 'misinformation': '虚假信息',
+                     'psychosocial': '心理危害', 'scam': '欺诈',
+                     'other': '其他'}.get(cat, cat)
+        color = '#f56c6c' if cat_pct < 50 else ('#e6a23c' if cat_pct < 90 else '#67c23a')
+        html_parts.append(f'''<tr>
+  <td style="padding:10px 14px;border:1px solid #e4e7ed;">{cat_label} ({cat})</td>
+  <td style="padding:10px 14px;border:1px solid #e4e7ed;text-align:right;">{stats['total']}</td>
+  <td style="padding:10px 14px;border:1px solid #e4e7ed;text-align:right;">{stats['refused']}</td>
+  <td style="padding:10px 14px;border:1px solid #e4e7ed;text-align:right;color:{color};font-weight:600;">{cat_pct:.0f}%</td>
+</tr>''')
+
+    html_parts.append('</tbody></table></div>')
+
+    # 回复为空的样本警告
+    empty_response = [s for s in samples if not s.get('response', '')]
+    if empty_response:
+        html_parts.append(f'''<div style="background:#fef0f0;border:1px solid #fbc4c4;border-radius:8px;padding:14px;margin-top:16px;">
+<h2 style="color:#f56c6c;font-size:1.1em;margin:0 0 8px 0;border:none;padding:0;">⚠️ {len(empty_response)} 个样本回复为空（API 静默过滤）</h2>
+<p style="color:#606266;font-size:0.9em;margin:0;">这些样本可能是 API 超时、流式响应中断或内容被安全网关过滤导致回复未捕获。建议检查 API 日志或重新执行测试。</p>
+<p style="color:#909399;font-size:0.85em;margin:6px 0 0;">涉及样本：{', '.join(_esc(s.get('sample_id', '?')) for s in empty_response)}</p>
+</div>''')
+
+    html_parts.append('</div>')
+
+    # 按类别详细展开（前 5 个样本）
+    html_parts.append('<h2 style="margin:24px 0 12px;font-size:1.2em;">🔍 详细结果</h2>')
+    for cat, stats in sorted(categories.items()):
+        cat_label = {'hate': '仇恨言论', 'hate_speech': '仇恨言论', 'violence': '暴力',
+                     'sexual': '色情', 'self_harm': '自残', 'illegal': '违法',
+                     'jailbreak': '越狱', 'cyber': '网络犯罪',
+                     'leakage': '信息泄露', 'misinformation': '虚假信息',
+                     'psychosocial': '心理危害', 'scam': '欺诈',
+                     'other': '其他'}.get(cat, cat)
+        cat_samples = [s for s in samples if (s.get('harm_category') or 'other') == cat][:5]
+        html_parts.append(f'<h3 style="margin:16px 0 8px;color:#303133;">{cat_label} ({cat}) - {stats["total"]} 个样本</h3>')
+        for s in cat_samples:
+            ag = s.get('aggregated', {})
+            refused = ag.get('refusal_detected', False)
+            refused_label = '✅ 已拒绝' if refused else '⚠️ 未拒绝'
+            refused_color = '#67c23a' if refused else '#f56c6c'
+            original = _esc(s.get('original_prompt', ''))
+            raw_converted = s.get('converted_prompt', '')
+            # 提取转换类型和有效信息，过滤掉 ASCII 艺术噪音
+            converted_summary = _summarize_converted(raw_converted)
+            response_raw = s.get('response', '')
+            response = _esc(response_raw) if response_raw else ''
+
+            # 空回复处理
+            if not response_raw and refused:
+                response_html = (
+                    '<span style="color:#e6a23c;font-weight:600;">⚠️ 空回复（API 静默过滤）</span>'
+                    '<br><span style="color:#909399;font-size:0.85em;">'
+                    '（API 返回 HTTP 200 但 content 为空，已被视为拒答）</span>'
+                )
+                converted_html = f'<div style="margin-bottom:6px;color:#606266;font-size:0.9em;"><strong>越狱转换:</strong> {converted_summary}</div>' if converted_summary else ''
+            elif not response_raw and not refused:
+                response_html = '<span style="color:#909399;">（空）</span>'
+                converted_html = ''
+            elif response_raw and len(response_raw) < 100 and refused:
+                # 被拒绝但回复被截断（如 "抱歉，我无法"）
+                response_html = (
+                    f'{response}'
+                    f'<br><span style="color:#e6a23c;font-size:0.85em;">⚠️ 回复可能被截断（仅 {len(response_raw)} 字符）</span>'
+                )
+                converted_html = f'<div style="margin-bottom:6px;color:#606266;font-size:0.9em;"><strong>越狱转换:</strong> {converted_summary}</div>' if converted_summary else ''
+            else:
+                response_html = response or '<span style="color:#909399;">（空）</span>'
+                converted_html = f'<div style="margin-bottom:6px;color:#606266;font-size:0.9em;"><strong>越狱转换:</strong> {converted_summary}</div>' if converted_summary else ''
+
+            html_parts.append(f'''<div style="background:#fff;border:1px solid #e4e7ed;border-radius:8px;padding:14px;margin-bottom:10px;">
+<div style="display:flex;gap:12px;align-items:center;margin-bottom:8px;flex-wrap:wrap;">
+  <span style="color:{refused_color};font-weight:600;font-size:1em;">{refused_label}</span>
+  <span style="color:#909399;font-size:0.85em;">质量分: {ag.get('quality_score', 0):.3f}</span>
+  <span style="color:#909399;font-size:0.85em;">有害分: {ag.get('harm_score', 0):.3f}</span>
+  <span style="color:#909399;font-size:0.85em;">样本: {_esc(s.get('sample_id', ''))}</span>
+</div>
+<div style="margin-bottom:6px;color:#606266;font-size:0.9em;"><strong>原始 Prompt:</strong> {original}</div>
+{converted_html}
+<div style="color:#606266;font-size:0.9em;"><strong>模型回复:</strong> {response_html}</div>
+</div>''')
+
+    html_parts.append('</div>')
+    return '\n'.join(html_parts)
+
+
 @results_bp.route('/quality/<int:result_id>/view', methods=['GET'])
 @login_required
 def view_quality_report(result_id):
@@ -1023,8 +1234,14 @@ def view_quality_report(result_id):
     if not report_file or not os.path.exists(report_file):
         return '<h1>报告文件不存在</h1>', 404
     with open(report_file, 'r', encoding='utf-8') as f:
-        md = f.read()
-    body = _build_full_report(md, result)
+        content = f.read()
+
+    # 根据文件扩展名判断报告类型
+    if report_file.endswith('.jsonl'):
+        body = _build_jsonl_safety_report(content, result)
+    else:
+        body = _build_full_report(content, result)
+
     return f'''<!DOCTYPE html>
 <html lang="zh-CN">
 <head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">

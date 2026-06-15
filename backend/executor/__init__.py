@@ -1105,9 +1105,24 @@ class TaskExecutor:
         elif converter_names:
             app.logger.warning(f"[Task {task.id}] Failed to build converter chain for: {converter_names}")
 
-        # 初始化评分器
+        # 初始化评分器（带 LLM Judge 兜底）
+        from ..metrics.scorers import RefusalJudge
+        from ..models import JudgeModel
+
+        # 优先使用配置的评价模型，否则复用目标 API
+        judge = None
+        judge_model_ids = config.get('judge_model_ids', [])
+        if judge_model_ids:
+            jm = JudgeModel.query.filter(JudgeModel.id == judge_model_ids[0]).first()
+            if jm:
+                judge = RefusalJudge(url=jm.url, api_key=jm.api_key, model=jm.model)
+                app.logger.info(f"[Task {task.id}] Using judge model: {jm.name} ({jm.model})")
+        if not judge:
+            judge = RefusalJudge(url=url, api_key=api_key, model=model)
+            app.logger.info(f"[Task {task.id}] No judge model configured, using target API for judgement")
+
         scorers = [
-            RefusalScorer(),
+            RefusalScorer(judge=judge),
             LikertScorer(),
             CategoryScorer(),
         ]
@@ -1158,6 +1173,11 @@ class TaskExecutor:
                             if resp.status == 200:
                                 data = await resp.json()
                                 response_text = data['choices'][0]['message'].get('content', '')
+                                # 记录空响应详情
+                                if not response_text:
+                                    finish = data['choices'][0].get('finish_reason', 'unknown')
+                                    choice_keys = list(data.get('choices', [{}])[0].keys())
+                                    _log(f"[{idx+1}/{len(samples)}] {sample['id']} - EMPTY content, finish_reason={finish}, choice_keys={choice_keys}")
                             else:
                                 err_text = await resp.text()
                                 response_text = f"[HTTP {resp.status}] {err_text[:500]}"
