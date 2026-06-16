@@ -5,7 +5,7 @@
         <div class="logo-container">
           <img src="@/views/logo.png" alt="Logo" class="logo">
         </div>
-        <h2>模型质量测试平台V1.0</h2>
+        <h2>模型质量测试平台V1.5</h2>
       </template>
       
       <el-form :model="loginForm" :rules="rules" ref="loginFormRef">
@@ -77,7 +77,8 @@ const handleLogin = async () => {
       loading.value = true
       try {
         const res = await authAPI.login(loginForm)
-        localStorage.setItem('token', 'logged-in')
+        localStorage.setItem('token', res.user?.id ? `session-${res.user.id}` : 'logged-in')
+        localStorage.setItem('username', loginForm.username)
         ElMessage.success('登录成功')
         router.push('/')
       } catch (error) {

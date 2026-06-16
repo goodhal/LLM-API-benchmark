@@ -74,7 +74,7 @@ def create_app(config_name='default'):
         # 所有非 API 路由都返回 index.html（让 Vue Router 处理）
         try:
             return app.send_static_file('index.html')
-        except:
+        except Exception:
             return app.send_static_file('index.html')
     
     # 404 错误处理 - 返回 index.html（SPA 路由）

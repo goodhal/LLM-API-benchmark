@@ -4,7 +4,7 @@
       <div class="logo">
         <img src="@/views/logo.png" alt="Logo" class="logo-img">
         <div class="logo-text">
-          <h3>模型质量测试平台V1.0</h3>
+          <h3>模型质量测试平台V1.5</h3>
         </div>
       </div>
       <el-menu
@@ -78,7 +78,7 @@ import {
 
 const router = useRouter()
 const route = useRoute()
-const username = ref(localStorage.getItem('username') || 'huangxuan')
+const username = ref(localStorage.getItem('username') || '用户')
 const searchText = ref('')
 
 const activeMenu = computed(() => {

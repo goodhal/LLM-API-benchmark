@@ -1,6 +1,7 @@
 """
 数据库模型定义
 """
+import json
 from datetime import datetime
 from flask_sqlalchemy import SQLAlchemy
 from flask_login import UserMixin
@@ -92,8 +93,7 @@ class Task(db.Model):
         labels = {}
         if self.labels_json:
             try:
-                import json as _json
-                labels = _json.loads(self.labels_json)
+                labels = json.loads(self.labels_json)
             except Exception:
                 pass
         return {
@@ -157,7 +157,7 @@ class PerfTestResult(db.Model):
     status = db.Column(db.String(20), default='success')  # 'success', 'failed'
     error_message = db.Column(db.Text)  # 错误信息
     
-    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    created_at = db.Column(db.DateTime, default=datetime.now)
     
     def to_dict(self):
         # 从关联的 Task 获取任务名称和模型名称
@@ -166,12 +166,11 @@ class PerfTestResult(db.Model):
         schedule_mode = self.schedule_mode
         if self.task and self.task.config:
             try:
-                import json as _json
-                config = _json.loads(self.task.config)
+                config = json.loads(self.task.config)
                 model_name = config.get('model')
                 if not schedule_mode:
                     schedule_mode = config.get('schedule_mode', 'concurrent')
-            except:
+            except Exception:
                 pass
 
         result = {
@@ -206,15 +205,13 @@ class PerfTestResult(db.Model):
         # 解析 JSON 格式的扩展指标
         if self.percentiles_json:
             try:
-                import json as _json
-                result['percentiles'] = _json.loads(self.percentiles_json)
-            except:
+                result['percentiles'] = json.loads(self.percentiles_json)
+            except Exception:
                 pass
         if self.latency_stats_json:
             try:
-                import json as _json
-                result['latency_stats'] = _json.loads(self.latency_stats_json)
-            except:
+                result['latency_stats'] = json.loads(self.latency_stats_json)
+            except Exception:
                 pass
 
         return result
@@ -256,8 +253,8 @@ class QualityTestResult(db.Model):
     status = db.Column(db.String(20), default='success')  # 'success', 'failed'
     error_message = db.Column(db.Text)  # 错误信息
     
-    created_at = db.Column(db.DateTime, default=datetime.utcnow)
-    
+    created_at = db.Column(db.DateTime, default=datetime.now)
+
     def to_dict(self):
         # 从关联的 Task 获取任务名称
         task_name = self.task.name if self.task else None
@@ -265,8 +262,7 @@ class QualityTestResult(db.Model):
         enhanced_scores = None
         if self.enhanced_scores_json:
             try:
-                import json as _json
-                enhanced_scores = _json.loads(self.enhanced_scores_json)
+                enhanced_scores = json.loads(self.enhanced_scores_json)
             except Exception:
                 pass
 
@@ -381,19 +377,18 @@ class QualityEvalResult(db.Model):
     created_at = db.Column(db.DateTime, default=datetime.now)
 
     def to_dict(self):
-        import json as _json
         task_name = self.task.name if self.task else None
         model_name = None
         if self.task and self.task.config:
             try:
-                config = _json.loads(self.task.config)
+                config = json.loads(self.task.config)
                 model_name = config.get('model')
             except Exception:
                 pass
         metrics = {}
         if self.metrics_json:
             try:
-                metrics = _json.loads(self.metrics_json)
+                metrics = json.loads(self.metrics_json)
             except Exception:
                 pass
         return {
@@ -462,12 +457,11 @@ class ConsistencyTestResult(db.Model):
     created_at = db.Column(db.DateTime, default=datetime.now)
 
     def to_dict(self):
-        import json as _json
         task_name = self.task.name if self.task else None
         responses = None
         if self.responses_json:
             try:
-                responses = _json.loads(self.responses_json)
+                responses = json.loads(self.responses_json)
             except Exception:
                 pass
         return {
@@ -519,12 +513,11 @@ class RegressionTestResult(db.Model):
     created_at = db.Column(db.DateTime, default=datetime.now)
 
     def to_dict(self):
-        import json as _json
         task_name = self.task.name if self.task else None
         detail = None
         if self.detail_json:
             try:
-                detail = _json.loads(self.detail_json)
+                detail = json.loads(self.detail_json)
             except Exception:
                 pass
         return {

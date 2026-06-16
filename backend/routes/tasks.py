@@ -50,7 +50,9 @@ def get_tasks():
     
     # 按模型名称筛选
     if model:
-        query = query.filter(Task.config.contains(f'"model": "{model}"'))
+        # 防止 JSON 注入：对 model 参数进行转义
+        safe_model = model.replace('"', '').replace('\\', '')
+        query = query.filter(Task.config.contains(f'"model": "{safe_model}"'))
     
     tasks = query.order_by(Task.created_at.desc()).all()
     

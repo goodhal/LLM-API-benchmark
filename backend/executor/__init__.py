@@ -137,7 +137,7 @@ class TaskExecutor:
                 try:
                     task.status = 'failed'
                     self._safe_commit()
-                except:
+                except Exception:
                     pass
                 self._update_next_run_time(task)
     
@@ -185,7 +185,7 @@ class TaskExecutor:
             f'--model {config["model"]}',
             f"--api {config.get('api', 'openai')}",
             f"--url {config['url']}",
-            f"--api-key {config['api_key'][:10]}...",  # 隐藏部分密钥
+            f"--api-key ***",  # 隐藏密钥
             f"--tokenizer-path {config.get('tokenizer_path', 'Qwen/Qwen2-1.5B-Instruct')}",
             f"--parallel {config.get('parallel', 8)}",
             f"-n {config.get('number', 50)}",
@@ -917,7 +917,7 @@ class TaskExecutor:
         # 格式化命令为多行显示
         cmd_str = ' \\\n  '.join([
             f'{sys.executable} {audit_script}',
-            f"--key {config['api_key'][:10]}...",
+            f"--key ***",
             f"--url {config['url']}",
             f"--model {model_name}",
             f"--output {report_path}"

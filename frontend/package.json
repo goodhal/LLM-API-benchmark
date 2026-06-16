@@ -1,6 +1,6 @@
 {
   "name": "model-test-admin",
-  "version": "1.0.0",
+  "version": "1.5.0",
   "description": "模型质量测试管理后台",
   "scripts": {
     "dev": "vite",

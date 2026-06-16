@@ -72,7 +72,8 @@ def get_perf_results():
     
     # 按模型名称筛选（通过关联的 Task 表）
     if model:
-        query = query.join(Task).filter(Task.config.contains(f'"model": "{model}"'))
+        safe_model = model.replace('"', '').replace('\\', '')
+        query = query.join(Task).filter(Task.config.contains(f'"model": "{safe_model}"'))
     
     if start_time:
         parsed_start = parse_time_param(start_time)
@@ -106,7 +107,7 @@ def get_perf_models():
             config = json.loads(task.config)
             if 'model' in config:
                 models.add(config['model'])
-        except:
+        except Exception:
             pass
     
     return jsonify({
@@ -150,7 +151,7 @@ def _build_perf_html_report(result):
     if task and task.config:
         try:
             model_name = json.loads(task.config).get('model', '')
-        except:
+        except Exception:
             pass
     
     def fmt(v, unit='', precision=2):
@@ -286,7 +287,8 @@ def get_perf_chart_data():
     
     # 按模型名称筛选（通过关联的 Task 表）
     if model:
-        query = query.join(Task).filter(Task.config.contains(f'"model": "{model}"'))
+        safe_model = model.replace('"', '').replace('\\', '')
+        query = query.join(Task).filter(Task.config.contains(f'"model": "{safe_model}"'))
     
     if start_time:
         parsed_start = parse_time_param(start_time)

@@ -74,22 +74,6 @@ def rouge_l(prediction: str, reference: str) -> float:
     return _fbeta(precision, recall)
 
 
-def char_f1(prediction: str, reference: str) -> float:
-    pred_chars = list(normalize_text(prediction).replace(" ", ""))
-    ref_chars = list(normalize_text(reference).replace(" ", ""))
-    if not pred_chars and not ref_chars:
-        return 1.0
-    if not pred_chars or not ref_chars:
-        return 0.0
-    overlap = Counter(pred_chars) & Counter(ref_chars)
-    shared = sum(overlap.values())
-    if shared == 0:
-        return 0.0
-    precision = shared / len(pred_chars)
-    recall = shared / len(ref_chars)
-    return _fbeta(precision, recall)
-
-
 def _lcs_len(a: list[str], b: list[str]) -> int:
     dp = [0] * (len(b) + 1)
     for token_a in a:
